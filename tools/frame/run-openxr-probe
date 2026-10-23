@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Launch the GLX/sRGB OpenXR colour test. No game data is read or written.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+export LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [[ -z "${XR_RUNTIME_JSON:-}" && -r /opt/steamvr/steamxr_linuxarm64.json ]]; then
+	export XR_RUNTIME_JSON=/opt/steamvr/steamxr_linuxarm64.json
+fi
+exec "$root/sonicr_openxr_glx_probe" "${@:-10}"

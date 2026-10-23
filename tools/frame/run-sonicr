@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Launch the native game against its XDG-owned data tree; the game writes saves
+# and settings in that same directory, never in this package or source checkout.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+data_dir="${SONICR_DATA_DIR:-$data_home/sonic-r-vr/data}"
+if [[ ! -f "$data_dir/GENERAL/SONICR.BIT" ]]; then
+	echo "Sonic R data is missing at: $data_dir" >&2
+	echo "Import an owned PC ZIP with: $root/import_sonicr_data.py /path/to/SonicR.zip" >&2
+	exit 1
+fi
+
+export LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$root/sonicr" --fullscreen "$@" "$data_dir"

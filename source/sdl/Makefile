@@ -10,6 +10,13 @@ IS_MINGW := $(filter MINGW% MSYS%, $(UNAME_S))
 
 # Optional features. Override from the command line, e.g. `make SOFT=1`.
 
+# All VR game-side code is opt-in and remains absent from flat builds.
+SONICR_VR ?= 0
+ifneq ($(filter $(SONICR_VR),0 1),$(SONICR_VR))
+  $(error SONICR_VR must be 0 or 1)
+endif
+SONICR_VR_CFLAGS = -DSONICR_VR=$(SONICR_VR)
+
 ifeq ($(UNAME_S),Darwin)
   CC = clang
   GL_CFLAGS = -DGL_SILENCE_DEPRECATION
@@ -47,6 +54,7 @@ endif
 CSRC = $(shell find $(SRCDIR) -name '*.c' ! -path '$(SRCDIR)/gles2/*')
 
 SDL_CFLAGS = $(shell sdl2-config --cflags)
+SDL_MIXER_CFLAGS = $(shell pkg-config --cflags SDL2_mixer 2>/dev/null)
 ifneq ($(IS_MINGW),)
   # Static-link chain for MSYS2 UCRT64: explicit SDL2 + SDL2_mixer codec deps
   # + Win32 system libs. Order matters; opengl32 lives at the tail.
@@ -111,7 +119,8 @@ CFLAGS = -I$(SRCDIR) -std=c11 -Os -g -Wall -Wextra -Werror \
          -Werror=pointer-to-int-cast -Werror=int-to-pointer-cast \
          -DSONICR_SDL -DSONICR_DEBUG_LOG \
          $(PLATFORM_CFLAGS) $(GL_CFLAGS) \
-         $(SDL_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS)
+         $(SDL_CFLAGS) $(SDL_MIXER_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS) \
+         $(SONICR_VR_CFLAGS)
 LDFLAGS = $(SANITIZE) $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS)
 
 # Object files
@@ -129,7 +138,8 @@ RELEASE_CFLAGS = -I$(SRCDIR) -std=c11 -Os -g -Wall -Wextra \
                  -Wno-void-pointer-to-int-cast -Wno-int-to-void-pointer-cast \
                  -DSONICR_SDL \
                          $(PLATFORM_CFLAGS) $(GL_CFLAGS) \
-                 $(SDL_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS)
+                 $(SDL_CFLAGS) $(SDL_MIXER_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS) \
+                 $(SONICR_VR_CFLAGS)
 RELEASE_LDFLAGS = $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS)
 RELEASE_OBJS = $(patsubst $(SRCDIR)/%.c, $(RELEASE_BUILDDIR)/%.o, $(CSRC))
 RELEASE_TARGET = $(RELEASE_BUILDDIR)/sonicr

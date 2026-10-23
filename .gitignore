@@ -4,6 +4,9 @@ source/sdl/build-release/
 source/sdl/build-wasm/
 source/dc/build/
 
+# Native Frame build, package, and host smoke evidence
+/build/
+
 # Object files and compiled binaries
 *.o
 *.elf
@@ -22,3 +25,5 @@ update-repo.sh
 
 # OS / editor cruft
 .DS_Store
+__pycache__/
+*.py[cod]
