@@ -60,6 +60,7 @@ GPU_PREFIXES = (
 NEEDED_LINE = re.compile(r"\(NEEDED\).*?\[([^\]]+)\]")
 LDD_RESOLVED_LINE = re.compile(r"^\s*(\S+)\s+=>\s+(/\S+)(?:\s|$)")
 LDD_MISSING_LINE = re.compile(r"^\s*(\S+)\s+=>\s+not found\s*$")
+LDD_ABSOLUTE_LINE = re.compile(r"^\s*(/\S+)\s+\(0x[0-9a-fA-F]+\)\s*$")
 
 
 def needed_sonames(binary: Path) -> list[str]:
@@ -93,6 +94,13 @@ def library_entries(binary: Path) -> list[tuple[str, Path]]:
         if match:
             soname, path = match.groups()
             resolved[soname] = Path(path)
+            continue
+        absolute = LDD_ABSOLUTE_LINE.match(line)
+        if absolute:
+            path = Path(absolute.group(1))
+            soname = path.name
+            if soname in needed:
+                resolved[soname] = path
 
     entries: list[tuple[str, Path]] = []
     for soname in needed:

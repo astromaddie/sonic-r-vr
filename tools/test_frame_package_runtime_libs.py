@@ -35,13 +35,21 @@ class DependencyGraphTests(unittest.TestCase):
         self.files[name] = path
         return path
 
-    def set_elf(self, path: Path, needed: list[str], resolutions: dict[str, Path | None]) -> None:
+    def set_elf(
+        self,
+        path: Path,
+        needed: list[str],
+        resolutions: dict[str, Path | None],
+        *,
+        absolute_entries: list[Path] | None = None,
+    ) -> None:
         path = path.resolve()
         self.needed[path] = needed
         lines = [
             f"\t{soname} => {target if target else 'not found'} (0x0000)"
             for soname, target in resolutions.items()
         ]
+        lines.extend(f"\t{entry} (0x0000)" for entry in absolute_entries or [])
         self.ldd[path] = "\n".join(lines)
 
     def run_tool(self, args: list[str], **kwargs):
@@ -78,6 +86,7 @@ class DependencyGraphTests(unittest.TestCase):
     def test_stages_private_transitive_deps_and_stops_at_host_roots(self) -> None:
         app = self.elf("game")
         mixer = self.elf("libSDL2_mixer-2.0.so.0")
+        loader = self.elf("ld-linux-aarch64.so.1")
         vorbis = self.elf("libvorbis.so.0")
         ogg = self.elf("libogg.so.0")
         gl = self.elf("libGL.so.1")
@@ -88,16 +97,21 @@ class DependencyGraphTests(unittest.TestCase):
         tinfo = self.elf("libtinfo.so.6")
         math = self.elf("libm.so.6")
 
-        self.set_elf(app, ["libSDL2_mixer-2.0.so.0", "libGL.so.1"], {
-            "libSDL2_mixer-2.0.so.0": mixer,
-            "libGL.so.1": gl,
-            # These are in ldd's transitive closure, not in the game's DT_NEEDED.
-            "libGLX_mesa.so.0": mesa,
-            "libgallium.so": gallium,
-            "libstdc++.so.6": cxx,
-            "libreadline.so.8": readline,
-            "libtinfo.so.6": tinfo,
-        })
+        self.set_elf(
+            app,
+            ["libSDL2_mixer-2.0.so.0", "libGL.so.1", "ld-linux-aarch64.so.1"],
+            {
+                "libSDL2_mixer-2.0.so.0": mixer,
+                "libGL.so.1": gl,
+                # These are in ldd's transitive closure, not in the game's DT_NEEDED.
+                "libGLX_mesa.so.0": mesa,
+                "libgallium.so": gallium,
+                "libstdc++.so.6": cxx,
+                "libreadline.so.8": readline,
+                "libtinfo.so.6": tinfo,
+            },
+            absolute_entries=[loader],
+        )
         self.set_elf(mixer, [
             "libvorbis.so.0", "libstdc++.so.6", "libGLX_mesa.so.0", "libreadline.so.8",
         ], {
@@ -121,6 +135,7 @@ class DependencyGraphTests(unittest.TestCase):
         )
         self.assertEqual({path.name for path in output.iterdir()}, set(staged))
         self.assertNotIn("libGL.so.1", staged)
+        self.assertNotIn("ld-linux-aarch64.so.1", staged)
         self.assertNotIn("libGLX_mesa.so.0", staged)
         self.assertNotIn("libgallium.so", staged)
         self.assertNotIn("libstdc++.so.6", staged)
