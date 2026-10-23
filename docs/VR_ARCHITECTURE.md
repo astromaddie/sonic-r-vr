@@ -2,30 +2,27 @@
 
 ## Current milestone
 
-The source builds as a native Linux ARM64 desktop game with `SONICR_VR=0` and
-renders a supplied-data Resort Island attract race under Xvfb/llvmpipe. The
-separate OpenXR/GLX colour probe statically links the OpenXR loader and bundles
-private SDL2_mixer codec/audio-support plus miniupnpc libraries. The first
-package and imported assets were copied to the Frame and their SHA-256 manifests
-matched before and after the initial Steam launch.
+The native Linux ARM64 game (`SONICR_VR=0`) and a separate OpenXR/GLX probe are
+installed on the Frame. The corrected package has 47 manifest entries and 22
+private libraries; all installed package hashes match. Original game assets
+remain in the external data directory.
 
-The first probe stopped at `SDL_CreateWindow` with `Couldn't find matching GLX
-visual`, before OpenXR initialization. A subsequent read-only dynamic-loader
-check found a concrete dependency conflict: the package's older
-`libstdc++.so.6` lacks `CXXABI_1.3.15` required by the Frame's Mesa Gallium
-library and `GLIBCXX_3.4.32` required by its SPIR-V tools. Both system libraries
-resolve without those errors when using the system C++ runtime. The original
-bundle also shadows the host's readline library and breaks the `ldd` shell
-interpreter. This is a packaging fault; context-profile changes are not yet
-supported by the evidence.
+The Steam-launched probe creates an OpenXR session with a GL 4.3 compatibility
+context on Mesa 26.3.0-devel zink/Turnip Adreno 750 and SteamVR/OpenXR 2.18.2.
+Both `GL_SRGB8_ALPHA8` eye swapchains are 1728×1728 with three images each.
+The explicit colour-only diagnostic passed both center-pixel checks: left
+`46,9,9,255`, right `9,14,46,255`. It cleared both eyes for 343 frames, submitted
+zero projection layers, and shut down orderly after five seconds. This verifies
+the GLX binding, session, swapchains and diagnostic readbacks. It does not
+establish game-side stereo or tracking behavior.
 
-The corrected stager now follows immediate ELF `DT_NEEDED` entries, recurses
-through private codec/network dependencies, and stops at system ABI, audio,
-display and graphics roots. In particular, C++, GCC support and readline use
-the Frame's libraries. Regression tests cover host-subtree pruning, private
-transitive closure, missing libraries, conflicting SONAMEs, and loader errors
-that return zero. A corrected bundle still needs a fresh normal Steam launch;
-the dependency diagnosis alone does not establish session creation.
+The flat game starts through Steam with the correct native executable and data
+working directory. That smoke test established process execution; no usable
+game-window capture or race progress evidence was obtained. The real-data Resort
+Island render under host Xvfb/llvmpipe remains separate evidence. In source,
+`SONICR_DEMO_TRACE` only shortens the title's attract timeout to one second; it
+does not emit race diagnostics. The next flat-game gate needs an app capture or
+explicit render/progress instrumentation.
 
 The package contains no original game archive or user game data. Import owned
 PC data into `${XDG_DATA_HOME:-$HOME/.local/share}/sonic-r-vr/data`; saves and
@@ -101,32 +98,55 @@ module or speculative stereo renderer has been added.
 | Gate | State | Evidence still needed |
 |---|---|---|
 | Linux ARM64 flat build and real game-data render | Complete on host | Frame performance and input remain unmeasured |
-| Native package installation | Package and asset manifests matched | Replace the faulty dependency bundle before the next Steam launch |
-| Standalone sRGB OpenXR/GLX color probe | First Steam launch failed at GLX visual selection | Correct dependency shadowing, then confirm session creation, both eye images, format, tracking validity, standby frames and orderly shutdown |
+| Native package installation | Corrected 47-entry package matched on Frame | Build portability still requires the pinned local image |
+| Standalone sRGB OpenXR/GLX color probe | Session, both colour readbacks and orderly shutdown verified | Game-side stereo, tracking and visual acceptance remain separate gates |
+| Flat game on Frame | Native Steam process launch verified | Obtain a game-window capture or race/render diagnostics, then check simulation, input and persistence |
 | Game's first stereo scene | Not started | Select a compatible way to render both eyes through the screen-projected drawing pipeline |
 | Third-person camera plus immediate head pose | Design agreed, not implemented | Verify eye separation, tracked rotation, camera movement and comfort in headset |
 | OpenXR pacing and 30 Hz game simulation | Not started | Separate prediction/render timing from simulation without advancing camera smoothing twice |
 | Frame input, suspend/standby, audio, sustained gameplay | Not started | Device checks and user playtest after the separate device authorization gate |
 
-## Initial device reproduction
+## Device artifact and reproduction
 
-The installed baseline is commit `e376997cd42abbca56f2262dc036b30e604c1a3d`,
-under `/home/steamos/devkit-game/SonicRVR`, with data under
-`/home/steamos/.local/share/sonic-r-vr/data`. The 68 package manifest entries and
-449 imported data files matched their local counterparts. The game binary
+The installed artifact preserves the executable build from commit
+`e376997cd42abbca56f2262dc036b30e604c1a3d` and records the dependency-only repack
+at `4021c2daa35d2ba021806b1d151810078331ae97`. It lives under
+`/home/steamos/devkit-game/SonicRVR`, with data under
+`/home/steamos/.local/share/sonic-r-vr/data`. The package is 14,707,316 bytes and
+contains no private C++/GCC runtime, readline or graphics driver. The game binary
 SHA-256 is `4cc1420a236a51ddb9c08a8f3b22e3fc56f04959f5a4ba6c5ce3a56fd49de39c`;
 the probe is `d32608bd916d1372819d4a959b998115b099e5585c25f07cb9a7b4e309aaf01f`.
 
-The probe was launched through Steam with `run-openxr-probe 5` and
-`SONICR_PROBE_FORCE_COLOR_ONLY=1`, using `SteamLinuxRuntime_4-arm64`. This mode
-checks swapchain colour clears without submitting projection layers. The
-2026-10-23 launch exited at GLX window creation, so it produced no session,
-swapchain, or colour-readback evidence. The planned flat-game smoke run was
-skipped after that failure. Diagnostic arguments were removed, the normal
-`run-sonicr` shortcut was restored, and no Sonic R process remained.
+The 2026-10-23 colour check ran through Steam with `SteamLinuxRuntime_4-arm64`,
+using a temporary per-app wrapper that explicitly exported
+`SONICR_PROBE_FORCE_COLOR_ONLY=1` and `SDL_AUDIODRIVER=dummy`, then executed
+`run-openxr-probe 5`. The earlier devkit environment registration did not reach
+the probe: its actual output identified normal projection mode and one submitted
+frame. Verify the mode and result in the application log rather than inferring
+them from the title configuration.
 
-To reproduce the dependency diagnosis without opening a display, run the
-following on the Frame and inspect stderr as well as the exit status:
+The required run logged both `[clear-check] ... PASS` lines and
+`COLOR CLEARS VERIFIED; submitted_layers=0; tracking_validity=not_claimed`.
+The flat smoke used its own explicit dummy-audio/attract wrapper. It was stopped
+after about 39 seconds; no race-render conclusion follows from that run.
+
+Both temporary wrappers were removed, the normal `run-sonicr` shortcut and
+original settings were restored, and no Sonic R process remained. The traced
+mutable paths (`SONICR.INF`, `JOYSTICK.INF`, `KEYS.BIN`, `ONLINE.DAT`, `SAVE/`,
+`GHOST/`, `DEMOS/`) were recorded absent before the flat launch and remained
+absent afterward. The installed package manifest passed again. Cleanup removed
+the superseded package, recovering 22,188,032 bytes of measured device space;
+the shared Frame booking was released and the next queued task notified.
+
+The initial bundle failed GLX visual selection because its older C++ runtime
+lacked Mesa's required `CXXABI_1.3.15` and SPIR-V tools' `GLIBCXX_3.4.32`.
+It also shadowed host readline. The corrected stager follows immediate ELF
+`DT_NEEDED` entries, recurses through private codec/network dependencies and
+stops at system ABI, audio, display and graphics roots. Regression tests cover
+that boundary, private transitive closure, unresolved libraries, SONAME conflicts,
+absolute loader paths, and loader errors with zero exit status.
+
+Check the current Mesa dependency resolution without opening a display:
 
 ```sh
 /lib/ld-linux-aarch64.so.1 \
@@ -134,10 +154,12 @@ following on the Frame and inspect stderr as well as the exit status:
   --list /usr/lib/libGLX_mesa.so.0
 ```
 
-Compare with the same command without `--library-path`. The loader returned
-zero even with missing symbol-version errors in stderr. Compact manifests,
-journal extracts and the loader result are retained locally under the ignored
-`build/frame-linux-aarch64/device` directory.
+The corrected bundle resolves Mesa's libraries from `/usr/lib` with empty
+stderr. Inspect stderr as well as the exit status: the broken bundle's loader
+returned zero despite symbol-version errors. Compact manifests, journal extracts
+and results remain in the ignored `build/frame-linux-aarch64/device` directory,
+including `color-only-probe-result.txt`, `flat-smoke-result.txt` and
+`final-device-state.txt`.
 
 The probe launcher selects `/opt/steamvr/steamxr_linuxarm64.json` when
 `XR_RUNTIME_JSON` is unset and that file exists. Further device operations use
