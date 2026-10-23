@@ -1201,6 +1201,9 @@ void RenderWaterReflectionD3D(int vpIdx)
     if (g_d3dSurfaceMode == 4) {                                    /* 0x45d624 */
 #if WATER_RIPPLE_SW
         RenderWaterBandSWRipple(vpIdx);
+#if SONICR_VR
+        VR_WaterSurface();
+#endif
 #else
         FUN_0045ca28(vpIdx);
 #endif

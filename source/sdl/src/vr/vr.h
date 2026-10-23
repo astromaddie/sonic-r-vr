@@ -24,5 +24,6 @@ void VR_Layer(int layer); /* 0 world, 1 HUD, 2 sky, 3 full-eye fade */
 void VR_EmitVertex(const RenderVertex *v);
 void VR_SkyBegin(void);
 void VR_SkyEnd(void);
+void VR_WaterSurface(void);
 #endif
 #endif

@@ -9,6 +9,7 @@
 #include <string.h>
 #include "vr_xr.h"
 #include "vr_input.h"
+#include "vr_water.h"
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
@@ -150,6 +151,7 @@ int VR_Init(void) {
         }
         fprintf(stderr,"[vr-diag] synthetic yaw=%.1f tick=%d output=%s; OpenXR disabled\n",diagYaw/0.01745329251994f,dumpTick,dumpDir);
     }
+    vr_water_init();
     SDL_GL_SetSwapInterval(0);initialized=1;atexit(VR_Shutdown);
     return 1;
 }
@@ -160,6 +162,7 @@ void VR_Shutdown(void) {
     if(!diagnostic)vr_xr_shutdown();
     glBindFramebuffer(GL_FRAMEBUFFER,0);
     glDeleteFramebuffers(1,&framebuffer);glDeleteRenderbuffers(2,depth);
+    vr_water_shutdown();
     glDeleteTextures(2,diagTexture);glDeleteTextures(1,&menuTexture);
 }
 static int begin(void) {
@@ -360,6 +363,13 @@ void VR_ApplyCamera(int **camera) {
 }
 void VR_SkyBegin(void) { layer=2; }
 void VR_SkyEnd(void) { layer=0; }
+void VR_WaterSurface(void) {
+    if(!VR_EyeActive())return;
+    RenderCamera *camera=(RenderCamera*)eyeCamera;
+    vr_water_draw((float*)(eyeCamera+0x22),
+        (VRVec){camera->camFloatX,camera->camFloatY,camera->camFloatZ},
+        eyes[eye].fov,(unsigned)g_totalFrames,g_weatherType==WEATHER_SNOW,g_farClipFloat);
+}
 void VR_EmitVertex(const RenderVertex *v) {
     float w=v->rhw>0?1/v->rhw:1,x=v->sx,y=v->sy,z=v->sz;
     if(!identity && layer==0) {

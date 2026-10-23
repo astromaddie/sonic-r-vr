@@ -171,7 +171,7 @@ ground particle renderer may clear a culled slot only on the canonical pass; an 
 
 Water is the upstream port's animated, tinted panorama reflection plus bottom
 fill, with ambient `GENERAL/PLOP2.RAW` ring decals loaded by `LoadPlopSprites`.
-It has no separate continuous water-surface texture. The SDL reflection pass
+The native path has no separate continuous water-surface texture. The SDL reflection pass
 now explicitly scopes opaque/modulate/depth-write-off state, followed by its
 existing additive tint, and restores the caller's state just as the DC path
 does. This does not introduce a new water material. Baseline native and eye
@@ -190,6 +190,31 @@ regressions. These CPU checks establish geometry/state behavior, not wearer
 comfort or complete GPU coverage. Use the real-data temporal stereo diagnostic
 and its uninstrumented endpoint control before headset acceptance. Its state
 fingerprint now includes ground particle slots/visibility.
+
+### Continuous VR water surface
+
+At the user's request, actual eye passes add a translucent, animated ripple
+texture over the native reflection/tint. `vr_water.c` projects a Y=0 world
+plane through each eye's full camera basis and asymmetric FOV. World-XZ UVs
+keep the waves attached to the water during head movement; `g_totalFrames`
+supplies the same canonical animation phase to both eyes. Snow freezes it.
+A small context-owned procedural texture has a complete filtered mip chain;
+contrast fades toward the horizon. It is created once at VR initialization
+and deleted at shutdown, without texture-atlas slots or per-frame uploads.
+
+The surface draws before the playfield/track, so native land tiles and their
+water holes supply the existing mask. It never writes depth. The native GL
+state cache is flushed before scoped raw GL drawing, and actual state is
+restored afterward. Canonical/identity passes and VR0 retain their original
+appearance. No readbacks or synchronization calls are added.
+
+`tests/vr/run-water-surface.sh` records the production GL material: texture
+lifetime/mips, 31 animation ticks with repeated eye order, perspective UV
+agreement at a shared world point, camera translation/rotation and near-plane
+clipping, frozen/wrapped animation, and restored incoming GL state. Actual
+stationary Resort Island tick90 captures show water for visual review; compare
+the native/identity controls and both eyes, plus temporal ticks87–90. CPU
+checks do not establish the final material's visual quality or worn comfort.
 
 ### Stereo sprite regression
 
