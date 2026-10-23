@@ -16,8 +16,8 @@
 #include "r_state.h"
 #include "pad_bits.h"
 static int initialized,diagnostic,eye=-1,repeat,layer,identity,presented,mirrorDirty;
-static int ticks,frames,dumpTick=90,autoRace,drive,runtimeDump;
-static int traceDraw;
+static int ticks,frames,extraPasses,dumpTick=90,autoRace,drive,runtimeDump;
+static int traceDraw,stereoCheck;
 static uint64_t drawHash;
 static unsigned drawCount;
 static float units=80,diagYaw,diagRoll;
@@ -96,6 +96,18 @@ static void capture(const char *name,int w,int h) {
     for(int y=h-1;y>=0;y--)if(fwrite(pixels+(size_t)y*w*3,3,w,f)!=(size_t)w)die("capture write");
     fclose(f);free(pixels);fprintf(stderr,"[vr-diag] capture=%s size=%dx%d\n",path,w,h);
 }
+/* Opt-in observer: full-resolution, synchronous and deliberately excluded
+ * from normal rendering/performance runs. A second unchanged read validates
+ * the observer before comparing repeated production scene passes. */
+static uint64_t imageFingerprint(int e) {
+    size_t size=(size_t)eyes[e].width*eyes[e].height*3;
+    unsigned char *pixels=malloc(size);if(!pixels)die("stereo check allocation");
+    glPixelStorei(GL_PACK_ALIGNMENT,1);
+    glReadPixels(0,0,eyes[e].width,eyes[e].height,GL_RGB,GL_UNSIGNED_BYTE,pixels);
+    if(glGetError()!=GL_NO_ERROR)die("stereo check GL readback");
+    uint64_t hash=hashBytes(1469598103934665603ULL,pixels,size);
+    free(pixels);return hash;
+}
 int VR_Diagnostic(void) { return diagnostic; }
 unsigned short VR_PadBits(void) { return vr_input_read(g_joystickConfigWords); }
 int VR_AutoRace(void) { return diagnostic || autoRace; }
@@ -106,6 +118,7 @@ void VR_Layer(int value) { layer=value; }
 void VR_Viewport(int *w,int *h) { if(eye>=0){*w=eyes[eye].width;*h=eyes[eye].height;} }
 int VR_Init(void) {
     diagnostic=getenv("SONICR_VR_DIAGNOSTIC") && strcmp(getenv("SONICR_VR_DIAGNOSTIC"),"1")==0;
+    stereoCheck=diagnostic && getenv("SONICR_VR_DIAG_STEREO_CHECK") && strcmp(getenv("SONICR_VR_DIAG_STEREO_CHECK"),"1")==0;
     autoRace=getenv("SONICR_VR_AUTORACE") && strcmp(getenv("SONICR_VR_AUTORACE"),"1")==0;
     drive=diagnostic && getenv("SONICR_VR_DIAG_DRIVE") && strcmp(getenv("SONICR_VR_DIAG_DRIVE"),"1")==0;
     runtimeDump=!diagnostic && getenv("SONICR_VR_DUMP_TICK") && getenv("SONICR_VR_DUMP_DIR");
@@ -137,7 +150,7 @@ int VR_Init(void) {
 void VR_Shutdown(void) {
     if(!initialized)return;
     initialized=0;
-    fprintf(stderr,"[vr] shutdown race_ticks=%d race_display_frames=%d stereo_passes=%d diagnostic=%d\n",ticks,frames,frames*2,diagnostic);
+    fprintf(stderr,"[vr] shutdown race_ticks=%d race_display_frames=%d stereo_passes=%d diagnostic=%d\n",ticks,frames,frames*2+extraPasses,diagnostic);
     if(!diagnostic)vr_xr_shutdown();
     glBindFramebuffer(GL_FRAMEBUFFER,0);
     glDeleteFramebuffers(1,&framebuffer);glDeleteRenderbuffers(2,depth);
@@ -147,10 +160,12 @@ static int begin(void) {
     int visible;
     if(diagnostic) {
         displayTime+=1000000000LL/90;
-        VRQuat q=vr_mul((VRQuat){0,sinf(diagYaw/2),0,cosf(diagYaw/2)},(VRQuat){0,0,sinf(diagRoll/2),cosf(diagRoll/2)});
+        float yaw=diagYaw+(stereoCheck?0.02f*sinf(frames/15.0f):0);
+        VRQuat q=vr_mul((VRQuat){0,sinf(yaw/2),0,cosf(yaw/2)},(VRQuat){0,0,sinf(diagRoll/2),cosf(diagRoll/2)});
         for(int e=0;e<2;e++) {
             eyes[e].pose=(VRPose){q,vr_rotate(q,(VRVec){e?0.032f:-0.032f,0,0})};
             eyes[e].fov=(VRFov){-0.7853981634f,0.7853981634f,0.6435011088f,-0.6435011088f};
+            if(stereoCheck)eyes[e].fov=(VRFov){atanf(e?-0.8f:-1.2f),atanf(e?1.2f:0.8f),atanf(0.85f),atanf(-0.65f)};
         }
         visible=1;
     } else visible=vr_xr_begin(eyes,&displayTime);
@@ -173,7 +188,7 @@ static int begin(void) {
     return visible;
 }
 void VR_RaceStart(void) {
-    clockState=(VRClock){0};haveCamera=0;ticks=frames=0;presented=0;
+    clockState=(VRClock){0};haveCamera=0;ticks=frames=extraPasses=0;presented=0;
     modeRace=1;anchored=0;focusSince=0;
     if(VR_AutoRace()) {
         /* Start at the actual race camera; the deterministic test needs neither
@@ -249,10 +264,34 @@ void VR_RenderRace(int tick) {
         identity=0;
     }
     repeat=1;
+    int checkStereo=stereoCheck && ticks>=dumpTick-3;
+    uint64_t images[2]={0},streams[2]={0};unsigned counts[2]={0};
     for(int e=0;e<2;e++) {
-        target(e);layer=0;repeatRender();
+        target(e);layer=0;if(checkStereo)traceStart();repeatRender();
+        if(checkStereo) {
+            traceDraw=0;streams[e]=drawHash;counts[e]=drawCount;
+            images[e]=imageFingerprint(e);
+            if(images[e]!=imageFingerprint(e))die("stereo observer changed without a draw");
+            char name[64];snprintf(name,sizeof(name),"frame%04d-eye%d",frames,e);
+            capture(name,eyes[e].width,eyes[e].height);
+        }
         if(dump)capture(e?"eye1":"eye0",eyes[e].width,eyes[e].height);
         release();
+    }
+    if(checkStereo) {
+        /* Reverse the eye order, then repeat it normally, without a native
+         * update or pose change. All view scratch must be rebuilt each time. */
+        const int order[4]={1,0,0,1};
+        for(int i=0;i<4;i++) {
+            int e=order[i];target(e);layer=0;traceStart();repeatRender();traceDraw=0;extraPasses++;
+            if(streams[e]!=drawHash || counts[e]!=drawCount)die("eye order changed draw stream");
+            if(images[e]!=imageFingerprint(e)) {
+                capture("stereo-repeat-failure",eyes[e].width,eyes[e].height);
+                die("eye order changed image");
+            }
+            release();
+        }
+        fprintf(stderr,"[vr-diag] stereo_check frame=%d tick=%d repeats=4 observer=stable draw_stream=exact image=exact asymmetric=1\n",frames,ticks);
     }
     repeat=0;layer=0;
     /* Restore the canonical camera/projection before the next simulation tick. */
@@ -260,7 +299,7 @@ void VR_RenderRace(int tick) {
     if(!diagnostic)vr_xr_end(1);
     presented=1;
     if(dump) {
-        fprintf(stderr,"[vr-diag] complete ticks=%d display_frames=%d stereo_passes=%d yaw=%.1f roll=%.1f units_per_metre=%.3f synthetic=%d repeat_state=%s\n",ticks,frames,frames*2,diagYaw/0.01745329251994f,diagRoll/0.01745329251994f,units,diagnostic,diagnostic?"unchanged":"unchecked");
+        fprintf(stderr,"[vr-diag] complete ticks=%d display_frames=%d stereo_passes=%d yaw=%.1f roll=%.1f units_per_metre=%.3f synthetic=%d repeat_state=%s\n",ticks,frames,frames*2+extraPasses,diagYaw/0.01745329251994f,diagRoll/0.01745329251994f,units,diagnostic,diagnostic?"unchanged":"unchecked");
         exit(0);
     }
 }
@@ -329,11 +368,15 @@ void VR_EmitVertex(const RenderVertex *v) {
         p=vr_rotate(vr_inverse(eyes[eye].pose.q),p);
         float nx,ny;vr_project(p,eyes[eye].fov,&nx,&ny);x=(nx+1)*320;y=(1-ny)*240;w=-p.z;z=0;
     } else if(!identity && layer==2) {
-        /* Native panorama already uses eye yaw/pitch. Rotate its screen plane
-         * about the horizon for head roll; no IPD/translation at infinity. */
-        float dx=x-g_screenCenterX,dy=y-g_screenCenterY;
-        x=g_screenCenterX+cosf(roll)*dx-sinf(roll)*dy;
-        y=g_screenCenterY+sinf(roll)*dx+cosf(roll)*dy;
+        /* Native panorama already uses eye yaw/pitch. Rotate its angular
+         * plane for roll, then use the same exact asymmetric FOV correction
+         * as world geometry. No eye translation/parallax at infinity. */
+        float dx=(x-g_screenCenterX)/g_projScaleXCurrent;
+        float dy=(g_screenCenterY-y)/g_projScaleY;
+        VRVec direction={cosf(roll)*dx+sinf(roll)*dy,
+                         -sinf(roll)*dx+cosf(roll)*dy,-1};
+        float nx,ny;vr_project(direction,eyes[eye].fov,&nx,&ny);
+        x=(nx+1)*320;y=(1-ny)*240;
     }
     glVertex4f(x*w,y*w,z*w,w);
 }

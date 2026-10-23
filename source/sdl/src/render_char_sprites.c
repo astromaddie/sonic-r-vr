@@ -1,3 +1,4 @@
+#include "vr/vr_projection.h"
 /**
  * render_char_sprites.c — Character-attached sprite rendering
  *
@@ -89,10 +90,10 @@ void SubmitCharacterSprite(Player *player, int yOffset, int charId)
     int viewY = fixmul12(VM(0,1)*dx + VM(1,1)*dy + VM(2,1)*dz);
 
     /* 0x4503C7: project 4 screen corners (half-size 0x28 = 40) */
-    int scrL = g_screenCenterX + (viewX - 0x28) * g_projScaleXCurrent / viewZ;
-    int scrT = g_screenCenterY - (viewY + 0x28) * g_projScaleY / viewZ;
-    int scrR = g_screenCenterX + (viewX + 0x28) * g_projScaleXCurrent / viewZ;
-    int scrB = g_screenCenterY - (viewY - 0x28) * g_projScaleY / viewZ;
+    float scrL = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, viewX - 0x28, viewZ);
+    float scrT = vr_billboard_coord(g_screenCenterY, -g_projScaleY, viewY + 0x28, viewZ);
+    float scrR = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, viewX + 0x28, viewZ);
+    float scrB = vr_billboard_coord(g_screenCenterY, -g_projScaleY, viewY - 0x28, viewZ);
 
     /* 0x45043B: reduce depth for sprite sorting */
     int depth = viewZ - 0x18;
@@ -353,10 +354,10 @@ void RenderItemSprite(Player *player, int modelId, int itemType)
     int viewY = fixmul12(VM(0,1)*dx + VM(1,1)*dy + VM(2,1)*dz);
 
     /* 0x44FAA0: project 4 screen corners (half-size 0x20) */
-    int scrL = g_screenCenterX + (viewX - 0x20) * g_projScaleXCurrent / viewZ;
-    int scrT = g_screenCenterY - (viewY + 0x10) * g_projScaleY / viewZ;
-    int scrR = g_screenCenterX + (viewX + 0x20) * g_projScaleXCurrent / viewZ;
-    int scrB = g_screenCenterY - (viewY - 0x10) * g_projScaleY / viewZ;
+    float scrL = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, viewX - 0x20, viewZ);
+    float scrT = vr_billboard_coord(g_screenCenterY, -g_projScaleY, viewY + 0x10, viewZ);
+    float scrR = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, viewX + 0x20, viewZ);
+    float scrB = vr_billboard_coord(g_screenCenterY, -g_projScaleY, viewY - 0x10, viewZ);
 
     /* depth reduction */
     int depth = viewZ - 0x48;
@@ -475,10 +476,10 @@ void RenderPlayerItemEffect(Player *player, int yOffset, int effectState, int mo
     int halfW = 0x30 - modelId;                                     /* 0x44FF37: 0x30 - ecx(modelId) */
     int halfH = modelId + 0x30;                                     /* 0x44FF5A */
 
-    int scrL = g_screenCenterX + (viewX - halfW) * g_projScaleXCurrent / viewZ;
-    int scrT = g_screenCenterY - (viewY + halfH) * g_projScaleY / viewZ;
-    int scrR = g_screenCenterX + (viewX + halfW) * g_projScaleXCurrent / viewZ;
-    int scrB = g_screenCenterY - (viewY - halfH) * g_projScaleY / viewZ;
+    float scrL = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, viewX - halfW, viewZ);
+    float scrT = vr_billboard_coord(g_screenCenterY, -g_projScaleY, viewY + halfH, viewZ);
+    float scrR = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, viewX + halfW, viewZ);
+    float scrB = vr_billboard_coord(g_screenCenterY, -g_projScaleY, viewY - halfH, viewZ);
 
     /* depth reduction */
     int depth = viewZ - 0x48;

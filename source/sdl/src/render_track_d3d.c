@@ -1,4 +1,5 @@
 #include "vr/vr.h"
+#include "vr/vr_projection.h"
 /**
  * render_track_d3d.c — D3D track/object polygon renderer
  *
@@ -279,6 +280,10 @@ void RenderParallaxStripsD3D(int vpIdx)
 
     float horizonY = (float)horizonYi;
     float startX = (float)g_clipLeft - (float)projXtimesLow * recip256; // (1.0f / 256.0f);
+#if SONICR_VR
+    startX = vr_panorama_start(scrollVal, &stripStart, g_screenCenterX,
+                              g_projScaleXCurrent, g_clipLeft);
+#endif
     float curX = startX;
 
     /* Per-strip widths — band 6 is half-width to match its U=0..0.25 range. */
@@ -845,6 +850,10 @@ static void RenderWaterBandSWRipple(int vpIdx)
     float reflHeight = (float)g_projScaleY * 0.5f / WR_REFL_COMPRESS;
     float subStripWidth = (float)g_projScaleXCurrent * 0.125f;
     float startX = (float)g_clipLeft - (float)((sr_double)projXtimesLow * recip256);
+#if SONICR_VR
+    startX = vr_panorama_start(scrollVal, &stripStart, g_screenCenterX,
+                              g_projScaleXCurrent, g_clipLeft);
+#endif
     float baseY = (float)horizonYi;
 
     float bandWidths[7] = { bandWidth, bandWidth, bandWidth, bandWidth,

@@ -1,4 +1,5 @@
 #include "vr/vr.h"
+#include "vr/vr_projection.h"
 /**
  * hud_full.c — Full HUD rendering dispatcher and countdown
  *
@@ -362,10 +363,10 @@ void DrawCollectEffectsD3D(CollectEffect *buf)  /* EAX = buffer */
         /* --- Billboard projection (0x450AC5-0x450B4A) --- */
         int halfSize = entry->billboardSize;
 
-        int sx0 = g_screenCenterX + ((camX - halfSize) * g_projScaleXCurrent) / camZ;
-        int sy0 = g_screenCenterY - ((camY + halfSize) * g_projScaleY) / camZ;
-        int sx1 = g_screenCenterX + ((camX + halfSize) * g_projScaleXCurrent) / camZ;
-        int sy1 = g_screenCenterY - ((camY - halfSize) * g_projScaleY) / camZ;
+        float sx0 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX - halfSize, camZ);
+        float sy0 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY + halfSize, camZ);
+        float sx1 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX + halfSize, camZ);
+        float sy1 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY - halfSize, camZ);
 
         /* Adjusted depth for z-buffer (0x450B42): bias closer to camera
          * so effects render in front of the models they're attached to. */

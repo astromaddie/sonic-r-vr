@@ -61,9 +61,9 @@ The original perspective-correct UV interpolation and depth ordering remain.
 | `RenderAllCharacterModels`, limbs, balloons, rings and boxes | Recompute camera-space geometry per eye; animation phases remain tick-owned |
 | `RenderPlayfieldGridD3D`, `SkyVertexTransform` | Pass the eye camera explicitly to both float transforms and grid rendering |
 | `RenderBackground` | Full-eye clear/background; no screen-space world reprojection |
-| `ComputeParallaxAndPlayfieldState`, `RenderParallaxStripsD3D` | Native panorama scroll/horizon derived from eye yaw/pitch; apply eye roll to the screen plane; continue each strip's top texels into the upper cap; no eye translation at infinity |
+| `ComputeParallaxAndPlayfieldState`, `RenderParallaxStripsD3D` | Native panorama scroll/horizon derived from eye yaw/pitch; anchor strips to the optical axis, rotate angular coordinates for roll and apply the exact asymmetric FOV; continue each strip's top texels into the upper cap; no eye translation at infinity |
 | `RenderWaterReflectionD3D` | Retain the native panorama reflection/ripple as part of the distant background; no false IPD at its arbitrary screen depth |
-| `DrawCollectEffectsD3D`, item and ground particles | Eye-camera anchored billboards, native perspective size and fog |
+| `DrawCollectEffectsD3D`, item and ground particles | Eye-camera anchored billboards with fractional projected corners, native perspective size and fog |
 | Foot/pickup shadows, trails, air/water character effects | Rebuild projected geometry per eye; native world anchors and transparency retained |
 | `DrawSnowParticles` | Draw per eye; only the canonical tick render writes simulation-facing visibility |
 | Timer, status, minimap, reverse indicator, replay R, pause | Existing content on a 1.6 × 1.2 m plane at 2 m following head yaw/pitch, excluding roll, with runtime eye separation |
@@ -107,7 +107,7 @@ Shutdown releases acquired images, closes a begun frame, requests session exit,
 and destroys swapchains/session/instance before the SDL context.
 
 There are no synchronous image readbacks in normal rendering. `glReadPixels`
-is used only for explicitly requested one-shot diagnostic captures.
+is used only for explicitly requested diagnostic captures and observers.
 
 ## Deterministic host diagnostic
 
@@ -155,6 +155,47 @@ native input polling, only in synthetic diagnostics. Progress includes actual
 player/camera positions and display interpolation samples. Use tick 180 for a
 moving-race capture. Synthetic diagnostic captures do not establish runtime tracking,
 controller input, or device performance.
+
+### Stereo sprite regression
+
+Eye passes retain fractional billboard corners for rings, collect effects,
+character sprites, held items and item shields. Native integer rounding on the
+640 × 480 canvas could turn a small quad into zero area in only one eye; that
+information cannot be recovered by the final FOV remap or higher eye resolution.
+Flat and canonical native passes retain the original integer projection.
+The underlying native camera-space integer transforms remain unchanged.
+
+Sky and water atlas strips share an angular origin relative to the optical
+axis. An asymmetric eye's left clipping edge must not move the panorama's
+texture directions. Preceding strips are included when needed for left-edge
+coverage. Sky emission rotates normalized angular coordinates and then applies
+the exact eye FOV, including the CPU projection's integer-rounding correction.
+
+`tests/vr/run-sprite-projection.sh` calls production ring, collect-effect,
+character/item, sky and water renderers with a recording draw boundary. It
+checks 81 animated camera samples, repeated and reversed eye order (486
+passes), noncollapsed small sprites and asymmetric-eye panorama alignment.
+`--flat` checks the canonical native path; `SONICR_TEST_VR=0` compiles the flat
+variant. `SONICR_TEST_LEGACY_REF=ddff6ee` compiles the affected renderer files
+from the prior source in a temporary directory with the same test fixture.
+The legacy eye test fails: rings and collect effects collapse in 75/81 camera
+samples at depth 16000; corresponding sky boundaries differ by 0.25 in tangent
+space. The fixed source passes those geometry assertions. Flat draw-stream
+hashes can be compared directly between revisions and build variants.
+These are CPU geometry checks, not a GPU rasterization or performance claim.
+
+For actual production-scene temporal evidence, add
+`SONICR_VR_DIAG_STEREO_CHECK=1` to the host diagnostic command. This opt-in
+observer uses asymmetric eye FOVs, a small deterministic yaw sweep, and the
+last four native ticks before `DUMP_TICK`. Each display frame renders left/right,
+then right/left and left/right again without a simulation or pose update.
+It requires exact draw-stream and full-image equality for each same-eye repeat,
+and validates consecutive unchanged readbacks before comparisons. It writes
+`frameNNNN-eye0.ppm` / `frameNNNN-eye1.ppm` for temporal inspection and exits
+on observer, state or image mismatch. Readbacks and extra rendering occur only
+in this synthetic diagnostic. For matched legacy image evidence, retain this
+observer while substituting the legacy sprite/sky renderers and legacy sky
+emission block; ordinary symmetric baseline dumps do not exercise this defect.
 
 ## Controller input
 

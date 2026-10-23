@@ -1,3 +1,4 @@
+#include "vr/vr_projection.h"
 /**
  * render_hidden_obj.c — Billboard rendering for item boxes and track sub-objects.
  */
@@ -177,10 +178,10 @@ void RenderHiddenSubEntry(int worldX, int worldZ, int worldY)
     int camY = (int)(((long long)g_viewMtx01 * dx + (long long)g_viewMtx11 * dz + (long long)g_viewMtx21 * dy) >> 12);
 
     /* Project to screen with ±BILLBOARD_HALF offset */
-    int scrX0 = g_screenCenterX + (g_projScaleXCurrent * (camX - BILLBOARD_HALF)) / camZ;
-    int scrY0 = g_screenCenterY - (g_projScaleY * (camY + BILLBOARD_HALF)) / camZ;
-    int scrX1 = g_screenCenterX + (g_projScaleXCurrent * (camX + BILLBOARD_HALF)) / camZ;
-    int scrY1 = g_screenCenterY - (g_projScaleY * (camY - BILLBOARD_HALF)) / camZ;
+    float scrX0 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX - BILLBOARD_HALF, camZ);
+    float scrY0 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY + BILLBOARD_HALF, camZ);
+    float scrX1 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX + BILLBOARD_HALF, camZ);
+    float scrY1 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY - BILLBOARD_HALF, camZ);
 
     /* Screen clip */
     if (scrX0 > g_clipRight || scrX1 < g_clipLeft ||
