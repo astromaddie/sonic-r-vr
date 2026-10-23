@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * platform_sdl.c - SDL2 platform implementation
  *
@@ -492,7 +493,11 @@ int platform_init(int width, int height, int fullscreen, const char *title)
     SDL_GL_MakeCurrent(g_sdlWindow, g_sdlGLContext);
 
 #ifndef __EMSCRIPTEN__
+#if SONICR_VR
+    if (!VR_Init()) return -1;
+#else
     SDL_GL_SetSwapInterval(1);  /* vsync - browser handles this via rAF */
+#endif
 #endif
 
     return 0;
@@ -500,6 +505,9 @@ int platform_init(int width, int height, int fullscreen, const char *title)
 
 void platform_shutdown(void)
 {
+#if SONICR_VR
+    VR_Shutdown();
+#endif
     for (int i = 0; i < s_padCount; i++) {
         gamepad_close(i);
     }

@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * render_gl.c — OpenGL 1.x rendering backend (SDL2 port)
  *
@@ -464,6 +465,9 @@ void BeginFrame(void)
     int offsetX = (fullW - vpW) / 2;
     int offsetY = (fullH - vpH) / 2;
 
+#if SONICR_VR
+    if (VR_EyeActive()) { VR_Viewport(&vpW, &vpH); offsetX = offsetY = 0; }
+#endif
     g_glViewportOffsetX = offsetX;
     g_glViewportOffsetY = offsetY;
     g_glBackingWidth = vpW;
@@ -535,6 +539,9 @@ void EndFrame(void)
  */
 void FlipD3D(void)
 {
+#if SONICR_VR
+    if (VR_Present()) return;
+#endif
     platform_gl_swap();
 }
 

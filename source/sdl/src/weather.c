@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * weather.c — Per-track weather particle functions
  *
@@ -789,6 +790,9 @@ void DrawSnowParticles(int viewportIdx)
     for (int i = 0; i < count; i++) {
         PrecipParticle *p = &pBase[i];
         /* Clear visibility flag */
+#if SONICR_VR
+        if (!VR_Repeat())
+#endif
         p->state = 0;
 
         /* Check posY >= 0 (negative = dead particle) */
@@ -824,6 +828,9 @@ void DrawSnowParticles(int viewportIdx)
         int y1 = g_screenCenterY - ((camY - halfH) * g_projScaleY) / camZ;
 
         /* Mark as visible */
+#if SONICR_VR
+        if (!VR_Repeat())
+#endif
         p->state = 1;
 
         /* Viewport clip test */

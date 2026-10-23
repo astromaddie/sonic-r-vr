@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * r_gl_backend.c — OpenGL 1.x implementation of the immediate-mode render API.
  *
@@ -456,6 +457,9 @@ static inline void R_EmitVertex(const RenderVertex *v)
     glTexCoord2f(v->u, v->v);
 
     float w = (v->rhw > 0.0f) ? (1.0f / v->rhw) : 1.0f;
+#if SONICR_VR
+    if (VR_EyeActive()) { VR_EmitVertex(v); return; }
+#endif
     glVertex4f(v->sx * w, v->sy * w, v->sz * w, w);
 }
 
@@ -465,6 +469,9 @@ void R_DrawTriFan(const RenderVertex *v, int count)
         return;
     }
 
+#if SONICR_VR
+    VR_TraceDraw(v,count,&s_desired,sizeof(s_desired));
+#endif
     R_FlushState();
 
     glBegin(GL_TRIANGLE_FAN);

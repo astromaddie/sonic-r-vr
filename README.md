@@ -2,9 +2,10 @@
 
 This branch adds native Steam Frame development to
 [jnmartin84/sonic-r](https://github.com/jnmartin84/sonic-r). Start with the
-[Frame build and package guide](tools/frame/README.md). The initial package
-contains the flat ARM64 game and a separate OpenXR/GLX probe; the planned VR
-game uses a smoothed third-person chase camera with immediate head tracking.
+[Frame build and package guide](tools/frame/README.md). The build supports
+the flat ARM64 game (`SONICR_VR=0`) and an opt-in OpenXR stereo renderer
+(`SONICR_VR=1`) with an interpolated third-person chase camera and immediate
+head tracking. A standalone OpenXR/GLX probe is included for runtime diagnostics.
 The [VR architecture](docs/VR_ARCHITECTURE.md) records the renderer, timing,
 camera design, and remaining integration gates.
 

@@ -1,7 +1,8 @@
-# Steam Frame native bootstrap
+# Steam Frame native and stereo builds
 
-Run `tools/frame/build-linux-arm64.sh` on the Apple Silicon host to build and
-stage the game and standalone OpenXR/GLX colour probe. The build currently
+Run `tools/frame/build-linux-arm64.sh` to build the flat game, or
+`SONICR_VR=1 tools/frame/build-linux-arm64.sh` to build the OpenXR stereo game.
+Both stage the standalone OpenXR/GLX colour probe. The build currently
 requires the existing
 ARM64 Docker image `mariokart64recomp-frame:latest` (observed image ID
 `sha256:6cd15fa7941a706358920701a1ccb504852e8ebf1df6ebb0f4b92de6814455f4`),
@@ -29,9 +30,10 @@ The host game screenshot and compact build/device logs are in
 is hash-verified on the Frame. Its Steam-launched OpenXR probe passed both
 sRGB eye colour readbacks and orderly shutdown. The flat game test establishes
 native process startup; a rendered race still needs separate device evidence.
-See [`docs/VR_ARCHITECTURE.md`](../../docs/VR_ARCHITECTURE.md) for the installed
-artifact identity, explicit diagnostic wrapper, dependency correction and
-remaining validation gates.
+See [`docs/VR_ARCHITECTURE.md`](../../docs/VR_ARCHITECTURE.md) for the current
+stereo architecture, source checks, deterministic host captures, and remaining
+integration. `BUILD-METADATA.txt` identifies the flat/stereo build flag; earlier
+installed artifacts are separate from a newly built package.
 
 The dependency stager follows each ELF's direct `DT_NEEDED` entries and recurses
 only into private libraries. System SDL2, graphics/display/audio platform roots,
@@ -39,3 +41,19 @@ C/C++ runtimes and readline stay on SteamOS. This avoids shadowing the newer
 Mesa driver's runtime with older build-image libraries. Run the focused
 regression checks with `python3 tools/test_frame_package_runtime_libs.py`;
 the production builder also runs them before packaging.
+
+## Build only the game on Linux
+
+With SDL2, SDL2_mixer, miniupnpc, GL/X11 development packages and the OpenXR
+loader installed, build from the source directory (the pinned image supplies
+the OpenXR SDK under `/opt/openxr`):
+
+```sh
+make -C source/sdl release SONICR_VR=1 OPENXR_PREFIX=/opt/openxr
+```
+
+Use a clean build or a distinct `RELEASE_BUILDDIR` when changing the flag.
+The VR path currently requires Linux X11/GLX; macOS and Windows retain the
+[desktop builds](../../docs/desktop.md). The pinned ARM64 container route can
+be driven from macOS, Linux Docker, or Windows WSL2 if that exact image is
+available; it is not a published, reproducible image bootstrap.

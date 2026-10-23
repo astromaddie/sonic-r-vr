@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * screens.c — Screen functions (game state machine screens)
  *
@@ -41,6 +42,10 @@ extern void SetTitleTextureFile(const char *path);
  */
 void WaitForFrameCap(void)
 {
+#if SONICR_VR
+    g_currentFPS = 30;
+    return; /* xrWaitFrame owns race and menu pacing. */
+#endif
 #ifdef SONICR_DC
     /* DC: block on vblank IRQ via genwait — no busy-poll on gettimeofday.
      * 60 Hz vblank × 2 = 30 Hz cap. */

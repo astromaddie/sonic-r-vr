@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * main.c — SDL2 + OpenGL entry point
  *
@@ -777,6 +778,18 @@ def SONICR_DC /* DC splash screen */
     int mpPlayerCount = 0;
 
 title_sequence:
+#if SONICR_VR
+    if (VR_AutoRace()) {
+        extern void InitAnimData(void);
+        InitAnimData();
+        g_demoMode = DEMO_NONE;
+        g_raceType = RACE_TIMEATTACK; g_raceSubMode = SUBMODE_NORMAL;
+        g_trackId = TRACK_RESORT_ISLAND; g_numPlayers = 1; g_numHumans = 1; g_numViewports = 1;
+        g_weatherConfig = WC_CLEAR; g_timeOfDay = -1;
+        g_playerBase[0].charId = CHAR_SONIC;
+        goto race_setup;
+    }
+#endif
     InitCD();
     ResetInputState();
 
@@ -1290,6 +1303,9 @@ race_start:
     }
 
     /* Race loop */
+#if SONICR_VR
+    VR_RaceStart();
+#endif
 
     while ((g_raceFinished == 0 || g_fadeState != FADE_VISIBLE) && (int)g_raceFinished < 5) {
         /* PeekMessageA — SDL: pump events.
@@ -1298,6 +1314,12 @@ race_start:
         platform_pump_events();
         memcpy(g_diKeyboardState, s_keystate, 256);
 
+#if SONICR_VR
+        int vrTick = VR_RaceFrame();
+        if (vrTick < 0) return 0;
+        if (!vrTick) { VR_RenderRace(0); FlipD3D(); continue; }
+        g_skipThisFrame = 0; /* A begun XR race frame always owns its eye render. */
+#endif
         g_netFrameCounter = g_netFrameCounter + 1;
         if (g_netSessionActive != 0) {
             if (g_netGameStartState == 1) {
@@ -1354,6 +1376,9 @@ race_start:
         g_splashPrevState = g_interlaceMode;
         if (g_netSessionActive == 0 && g_isNetworkGame == 0) {
             UpdatePerPlayerInput();
+#if SONICR_VR
+            VR_DiagnosticInput();
+#endif
         }
         /* [0x4CC9B4]: debug track/variant-select cheat — deliberately not
          * ported (debug keys unwired; the intro-countdown reset it was mistranslated as
@@ -1652,7 +1677,11 @@ race_start:
             }
             if (g_skipThisFrame == 0) {
                 UpdateFrameTimers();
+#if SONICR_VR
+                VR_RenderRace(1);
+#else
                 RenderHUD();
+#endif
             }
             g_raceElapsedDisplay = timeGetTime_ms() / 1000 - g_raceTimerDisplayBase;
             UpdateLapCounter(1);
@@ -1681,7 +1710,11 @@ race_start:
                     goto special_race_unlock;
                 }
             }
+#if SONICR_VR
+            VR_RenderRace(1);
+#else
             RenderHUD();
+#endif
 render_frame:
             ;
         }

@@ -16,6 +16,17 @@ ifneq ($(filter $(SONICR_VR),0 1),$(SONICR_VR))
   $(error SONICR_VR must be 0 or 1)
 endif
 SONICR_VR_CFLAGS = -DSONICR_VR=$(SONICR_VR)
+ifeq ($(SONICR_VR),1)
+  ifneq ($(UNAME_S),Linux)
+    $(error SONICR_VR=1 currently requires Linux X11/GLX)
+  endif
+  ifeq ($(SOFT),1)
+    $(error SONICR_VR=1 requires the OpenGL renderer)
+  endif
+  OPENXR_PREFIX ?= /opt/openxr
+  SONICR_VR_CFLAGS += -I$(OPENXR_PREFIX)/include
+  SONICR_VR_LIBS = $(OPENXR_PREFIX)/lib/libopenxr_loader.a -lX11 -ldl -lpthread -lstdc++
+endif
 
 ifeq ($(UNAME_S),Darwin)
   CC = clang
@@ -121,7 +132,7 @@ CFLAGS = -I$(SRCDIR) -std=c11 -Os -g -Wall -Wextra -Werror \
          $(PLATFORM_CFLAGS) $(GL_CFLAGS) \
          $(SDL_CFLAGS) $(SDL_MIXER_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS) \
          $(SONICR_VR_CFLAGS)
-LDFLAGS = $(SANITIZE) $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS)
+LDFLAGS = $(SANITIZE) $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS) $(SONICR_VR_LIBS)
 
 # Object files
 COBJS = $(patsubst $(SRCDIR)/%.c, $(BUILDDIR)/%.o, $(CSRC))
@@ -140,7 +151,7 @@ RELEASE_CFLAGS = -I$(SRCDIR) -std=c11 -Os -g -Wall -Wextra \
                          $(PLATFORM_CFLAGS) $(GL_CFLAGS) \
                  $(SDL_CFLAGS) $(SDL_MIXER_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS) \
                  $(SONICR_VR_CFLAGS)
-RELEASE_LDFLAGS = $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS)
+RELEASE_LDFLAGS = $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS) $(SONICR_VR_LIBS)
 RELEASE_OBJS = $(patsubst $(SRCDIR)/%.c, $(RELEASE_BUILDDIR)/%.o, $(CSRC))
 RELEASE_TARGET = $(RELEASE_BUILDDIR)/sonicr
 

@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * hud_full.c — Full HUD rendering dispatcher and countdown
  *
@@ -516,7 +517,13 @@ void RenderHUD(void)
     R_SetTileClipFullScreen();
 #endif
 
+#if SONICR_VR
+    VR_Layer(3);
+#endif
     RenderBackground();
+#if SONICR_VR
+    VR_Layer(0);
+#endif
 
     /* Per-viewport rendering */
     unsigned int endVp = startViewport + viewportCount;
@@ -537,6 +544,9 @@ void RenderHUD(void)
                          (int)(vpc[10] * sy));
             R_FlushState();
         }
+#if SONICR_VR
+        VR_ApplyCamera(&g_currentRenderCam);
+#endif
         SetViewportClipRect(g_currentRenderCam);
 
         /* Derive the inward-facing edges for DC CPU scissoring. An edge is
@@ -624,22 +634,34 @@ void RenderHUD(void)
 
         ComputeParallaxAndPlayfieldState(vp, g_currentRenderCam);
 
+#if SONICR_VR
+        VR_SkyBegin();
+#endif
         RenderParallaxStripsD3D((int)vp);
-
         if (g_trackId != TRACK_RADIANT_EMERALD) {
             RenderWaterReflectionD3D((int)vp);
         }
+#if SONICR_VR
+        VR_SkyEnd();
+#endif
 
         if (g_trackId != TRACK_RADIANT_EMERALD) {
             if (g_objectRenderEnable) {
                 float *skyBase = &g_playfieldVertices[vp * 48];
                 float *skyUpper = skyBase + 24;
                 int *vpCfg = (int *)((char *)g_viewportConfigArray + vp * 0xC8);
+#if SONICR_VR
+                if (VR_EyeActive()) vpCfg = g_currentRenderCam;
+#endif
                 RenderPlayfieldGridD3D(skyBase, skyUpper, vpCfg);
             }
         }
 
-        if (g_demoMode == DEMO_NONE) {
+        if (g_demoMode == DEMO_NONE
+#if SONICR_VR
+            && !VR_EyeActive()
+#endif
+        ) {
             int hudPlayerIdx = (g_isNetworkGame != 0) ? g_localPlayerIndex : (int)vp;
             DrawTimerAndStatus(hudPlayerIdx);
         }
@@ -686,6 +708,13 @@ void RenderHUD(void)
 
         DrawOtherParticles();
 
+#if SONICR_VR
+        if (VR_EyeActive()) {
+            SetViewportFromConfig(g_viewportArray + vp * 21);
+            VR_Layer(1);
+            if (g_demoMode == DEMO_NONE) DrawTimerAndStatus((g_isNetworkGame != 0) ? g_localPlayerIndex : (int)vp);
+        }
+#endif
         /* Demo/replay rotating "R" overlay — binary 0x4CD71B */
         if (g_skipThisFrame == 0 && g_demoMode != DEMO_NONE && vp == startViewport) {
             R_ClearDepth();
@@ -745,10 +774,16 @@ void RenderHUD(void)
         DrawSplitBorder();
     }
 
+#if SONICR_VR
+    VR_Layer(1);
+#endif
     DrawPauseOverlay();
 
     /* Fade iris — 0x4cd48e: cmp [0x901c44], 0 / jge */
     if (g_fadeLevel < 0) {
+#if SONICR_VR
+        VR_Layer(3); /* Native iris/fade covers the complete eye image. */
+#endif
         RenderFadeOverlay();                            /* 0x4cd497 */
     }
 
@@ -1514,7 +1549,11 @@ subMode2_loop_exit:
      * machine with vpIndex = g_localPlayerIndex (see caller ~line 334), so a
      * non-host client (player 1/2/3) would be silenced by the vpIndex==0 gate.
      * Network play never double-fires, so allow it unconditionally there. */
-    if (g_isNetworkGame != 0 || vpIndex == 0) {                 /* 0x4D38FA: test ebx; jne skip */
+    if ((g_isNetworkGame != 0 || vpIndex == 0)
+#if SONICR_VR
+        && !VR_Repeat()
+#endif
+    ) {                 /* 0x4D38FA: test ebx; jne skip */
         if (g_introCountdown == 0x3B) {
             PlaySoundEffect(0x35, 0, 0);                                   /* 0x4D390C: "READY" */
         } else if (g_introCountdown == 0x1D) {
@@ -1669,7 +1708,11 @@ void DrawReverseIndicator(Player *pl)
     unsigned int progress = (unsigned int)pl->trackProgress;   /* current progress */
     unsigned int savedProgress = (unsigned int)pl->progressHighWater;  /* saved progress */
 
-    if (progress + 0xE00000u < savedProgress) {                /* 0x4D263C-0x4D2643: jae → unsigned <, wrong way */
+    if (progress + 0xE00000u < savedProgress
+#if SONICR_VR
+        && !VR_Repeat()
+#endif
+    ) {                /* 0x4D263C-0x4D2643: jae → unsigned <, wrong way */
         if (progress + 0x2800000u >= savedProgress) {          /* 0x4D2648-0x4D264F: jae → unsigned >=, not too far back */
             pl->progressHighWater = (int)(progress + 0xE00001u);       /* 0x4D265C: update saved */
 
@@ -1705,7 +1748,11 @@ void DrawReverseIndicator(Player *pl)
 
     /* Counter decay (0x4D26F3-0x4D2710) */
     displayCount = pl->_unk_0x1E4;                     /* 0x4D26F3: P_INT(0x1E2)>>16 = _unk_0x1E4 */
-    if (displayCount > 0 && g_isPaused == 0) {             /* 0x4D26FE, 0x4D2700 */
+    if (displayCount > 0 && g_isPaused == 0
+#if SONICR_VR
+        && !VR_Repeat()
+#endif
+    ) {             /* 0x4D26FE, 0x4D2700 */
         pl->_unk_0x1E4 -= 1;                               /* 0x4D2709: dec word */
     }
 }

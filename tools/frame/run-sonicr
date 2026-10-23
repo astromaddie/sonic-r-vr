@@ -12,5 +12,8 @@ if [[ ! -f "$data_dir/GENERAL/SONICR.BIT" ]]; then
 	exit 1
 fi
 
+if [[ -z "${XR_RUNTIME_JSON:-}" && -f /opt/steamvr/steamxr_linuxarm64.json ]]; then
+    export XR_RUNTIME_JSON=/opt/steamvr/steamxr_linuxarm64.json
+fi
 export LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$root/sonicr" --fullscreen "$@" "$data_dir"

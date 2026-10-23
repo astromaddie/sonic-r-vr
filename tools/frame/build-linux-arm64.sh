@@ -7,6 +7,8 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 image="${SONICR_BUILD_IMAGE:-mariokart64recomp-frame:latest}"
 expected_image_id="${SONICR_EXPECTED_BUILD_IMAGE_ID:-sha256:6cd15fa7941a706358920701a1ccb504852e8ebf1df6ebb0f4b92de6814455f4}"
+sonicr_vr="${SONICR_VR:-0}"
+case "$sonicr_vr" in 0|1) ;; *) echo "SONICR_VR must be 0 or 1" >&2; exit 2 ;; esac
 build_root="$repo/build/frame-linux-aarch64"
 logs="$build_root/logs"
 mkdir -p "$logs"
@@ -53,6 +55,7 @@ fi
 } > "$logs/build-environment.txt"
 
 docker run --rm --cpus=3 \
+	-e SONICR_VR="$sonicr_vr" \
 	-e SONICR_SOURCE_REV="$source_rev" \
 	-e SONICR_SOURCE_DIRTY_PATHS="$source_dirty" \
 	-e SONICR_SOURCE_DIGEST="$source_digest" \

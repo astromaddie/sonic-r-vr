@@ -1,10 +1,11 @@
 # Sonic R Steam Frame native milestone
 
-This ARM64 Linux package contains the unmodified flat SDL2 game build, its
+This ARM64 Linux package contains the SDL2 game build selected by
+`sonicr_vr` in `BUILD-METADATA.txt` (0 = flat, 1 = OpenXR stereo), its
 standalone OpenXR/GLX colour probe, the data importer, and the repository's two
 documented native-only data extras. It does not contain Sonic R game data,
 saves, Windows installers, GPU drivers, or a Steam registration/install script.
-The probe statically links the pinned OpenXR loader; the SteamVR OpenXR runtime
+The probe and VR-enabled game statically link the pinned OpenXR loader; the SteamVR OpenXR runtime
 still comes from SteamOS.
 
 ## Prepare owned game data
@@ -34,8 +35,9 @@ contents are preserved and cause an explicit conflict error.
 The game starts fullscreen and loads the default XDG data directory. Set
 `SONICR_DATA_DIR=/absolute/path/to/data` for a different data directory; the
 game stores saves and settings there. Additional existing game flags can be
-passed after the launcher name. The window is desktop OpenGL through SDL2, not
-a stereo game build.
+passed after the launcher name. A flat build uses the desktop SDL2 window. A VR build renders
+the race through per-eye cameras, with existing menus and HUD on a finite
+stereo panel. Both use the existing SDL keyboard/gamepad controls.
 
 The standalone probe uses no game data:
 
@@ -70,8 +72,6 @@ not included. `BUILD-METADATA.txt`, `MANIFEST.sha256`,
 `lib/THIRD-PARTY-COPYRIGHTS.txt`, the repository `LICENSE`, and
 `licenses/OpenXR-SDK-LICENSE.txt` identify the build and included notices.
 
-This milestone has host-render evidence only. It does not establish that the
-probe has created a Frame session, or that game rendering, timing, input, audio,
-stereo or head tracking work on-device. See
-[`docs/VR_ARCHITECTURE.md`](docs/VR_ARCHITECTURE.md) for source findings and
-remaining gates.
+See [`docs/VR_ARCHITECTURE.md`](docs/VR_ARCHITECTURE.md) for the
+renderer, timing, camera conventions, deterministic real-data host diagnostic,
+and validation boundaries.

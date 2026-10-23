@@ -1,3 +1,4 @@
+#include "vr/vr.h"
 /**
  * render_track_d3d.c — D3D track/object polygon renderer
  *
@@ -365,6 +366,17 @@ void RenderParallaxStripsD3D(int vpIdx)
                 { rightX, horizonY, SKY_Z, SKY_RHW, VERTEX_WHITE, 0, uR, vTop    },
             };
             EmitSkyWaterQuad(quad);
+#if SONICR_VR
+            if (VR_EyeActive()) {
+                RenderVertex cap[4] = {
+                    { curX,   (float)g_clipTop - 1024, SKY_Z, SKY_RHW, VERTEX_WHITE, 0, uL, vBottom },
+                    { rightX, (float)g_clipTop - 1024, SKY_Z, SKY_RHW, VERTEX_WHITE, 0, uR, vBottom },
+                    { rightX, curY, SKY_Z, SKY_RHW, VERTEX_WHITE, 0, uR, vBottom },
+                    { curX,   curY, SKY_Z, SKY_RHW, VERTEX_WHITE, 0, uL, vBottom },
+                };
+                EmitSkyWaterQuad(cap);
+            }
+#endif
 
             curX += bandWidths[si];
             si++;

@@ -32,7 +32,7 @@ if ! make -s -C source/sdl release-clean > "$logs/game-clean.log" 2>&1; then
 	tail -80 "$logs/game-clean.log" >&2
 	exit 1
 fi
-if ! make -s -C source/sdl release CC=gcc-12 SONICR_VR=0 -j3 > "$logs/game-build.log" 2>&1; then
+if ! make -s -C source/sdl release CC=gcc-12 SONICR_VR="${SONICR_VR:-0}" -j3 > "$logs/game-build.log" 2>&1; then
 	tail -100 "$logs/game-build.log" >&2
 	exit 1
 fi
@@ -108,6 +108,7 @@ if [[ "${SONICR_SOURCE_DIRTY_PATHS:-1}" == 0 ]]; then source_status=clean; fi
 		"${SONICR_SOURCE_REV:-unknown}" "$source_status" "${SONICR_SOURCE_DIGEST:-unknown}"
 	printf 'image_id=%s\nimage_arch=%s\n' "${SONICR_BUILD_IMAGE_ID:-unknown}" "$(dpkg --print-architecture)"
 	printf 'os_release=%s\n' "$(. /etc/os-release; echo "$PRETTY_NAME")"
+	printf 'sonicr_vr=%s\n' "${SONICR_VR:-0}"
 	printf 'compiler=%s\n' "$(gcc-12 --version | head -1)"
 	printf 'sdl2=%s\n' "$(sdl2-config --version)"
 	printf 'libsdl2-mixer-dev=%s\n' "$(dpkg-query -W -f='${Version}' libsdl2-mixer-dev)"
