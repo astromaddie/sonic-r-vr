@@ -8,6 +8,7 @@
 int VR_Init(void);
 void VR_Shutdown(void);
 int VR_Diagnostic(void);
+unsigned short VR_PadBits(void);
 int VR_AutoRace(void);
 void VR_DiagnosticInput(void);
 void VR_TraceDraw(const RenderVertex *v,int count,const void *state,size_t size);

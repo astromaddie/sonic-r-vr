@@ -37,7 +37,11 @@ The game starts fullscreen and loads the default XDG data directory. Set
 game stores saves and settings there. Additional existing game flags can be
 passed after the launcher name. A flat build uses the desktop SDL2 window. A VR build renders
 the race through per-eye cameras, with existing menus and HUD on a finite
-stereo panel. Both use the existing SDL keyboard/gamepad controls.
+stereo panel. VR builds also read OpenXR controllers: right Menu/hamburger is
+Start/Pause; A is jump/confirm; B or X accelerates/goes back; Y changes camera;
+left stick/D-pad steers/navigates; bumpers/triggers brake. Existing SDL keyboard
+and gamepad controls remain available. XR uses the native default gamepad map;
+the SDL per-device remapping screen applies only to SDL devices.
 
 The standalone probe uses no game data:
 

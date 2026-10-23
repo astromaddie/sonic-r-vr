@@ -13,6 +13,7 @@
 #include <string.h>
 #include "platform.h"
 #include "vr_xr.h"
+#include "vr_input.h"
 extern SDL_Window *g_sdlWindow;
 static XrInstance instance;
 static XrSession session;
@@ -59,11 +60,12 @@ int vr_xr_init(void) {
     if(!XGetWindowAttributes(display,wm.info.x11.window,&wa))return 0;
     int visual=0; glXGetFBConfigAttrib(display,config,GLX_VISUAL_ID,&visual);
     if((VisualID)visual!=XVisualIDFromVisual(wa.visual))return 0;
-    const char *extensions[]={XR_KHR_OPENGL_ENABLE_EXTENSION_NAME};
+    int frameExtension=vr_input_has_frame_extension();if(frameExtension<0)return 0;
+    const char *extensions[]={XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,"XR_VALVE_frame_controller_interaction"};
     XrInstanceCreateInfo ci={.type=XR_TYPE_INSTANCE_CREATE_INFO};
     strcpy(ci.applicationInfo.applicationName,"Sonic R VR");
     ci.applicationInfo.apiVersion=XR_API_VERSION_1_0;
-    ci.enabledExtensionCount=1; ci.enabledExtensionNames=extensions;
+    ci.enabledExtensionCount=frameExtension?2:1; ci.enabledExtensionNames=extensions;
     TRY(xrCreateInstance(&ci,&instance));
     XrSystemGetInfo si={.type=XR_TYPE_SYSTEM_GET_INFO,.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     XrSystemId system; TRY(xrGetSystem(instance,&si,&system));
@@ -83,6 +85,7 @@ int vr_xr_init(void) {
         .glxDrawable=glXGetCurrentDrawable(),.glxContext=context};
     XrSessionCreateInfo sci={.type=XR_TYPE_SESSION_CREATE_INFO,.next=&binding,.systemId=system};
     TRY(xrCreateSession(instance,&sci,&session));
+    if(!vr_input_init(instance,session,frameExtension))return 0;
     XrReferenceSpaceCreateInfo rs={.type=XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
         .referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL,.poseInReferenceSpace.orientation.w=1};
     TRY(xrCreateReferenceSpace(session,&rs,&space));
@@ -119,13 +122,16 @@ static void events(void) {
             XrSessionState state=((XrEventDataSessionStateChanged*)&ev)->state;
             fprintf(stderr,"[vr] session state=%d\n",state);
             focused=state==XR_SESSION_STATE_FOCUSED;
+            if(!focused)vr_input_clear();
+            else vr_input_profiles_changed();
             if(state==XR_SESSION_STATE_READY && !running) {
                 XrSessionBeginInfo bi={.type=XR_TYPE_SESSION_BEGIN_INFO,.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
                 running=check(xrBeginSession(session,&bi),"xrBeginSession");
             } else if(state==XR_SESSION_STATE_STOPPING && running) {
                 check(xrEndSession(session),"xrEndSession");running=0;
             } else if(state==XR_SESSION_STATE_EXITING || state==XR_SESSION_STATE_LOSS_PENDING) quit=1;
-        } else if(ev.type==XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)quit=1;
+        } else if(ev.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED)vr_input_profiles_changed();
+        else if(ev.type==XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING){vr_input_clear();quit=1;}
         ev.type=XR_TYPE_EVENT_DATA_BUFFER;
     }
     if(r!=XR_EVENT_UNAVAILABLE)check(r,"xrPollEvent");
@@ -144,6 +150,7 @@ int vr_xr_begin(VREye eyes[2],int64_t *time) {
         XrFrameBeginInfo bi={.type=XR_TYPE_FRAME_BEGIN_INFO};
         if(!check(xrBeginFrame(session,&bi),"xrBeginFrame"))return -1;
         begun=1;*time=frame.predictedDisplayTime;frameWaits++;
+        vr_input_sync(focused);
         if(!frame.shouldRender){standbyFrames++;if(!offheadRender)return 0;}
         XrViewLocateInfo li={.type=XR_TYPE_VIEW_LOCATE_INFO,.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
             .displayTime=frame.predictedDisplayTime,.space=space};
@@ -219,7 +226,9 @@ void vr_xr_shutdown(void) {
         while(running && SDL_GetTicks()-start<2000){events();SDL_Delay(10);}
     }
     for(int e=0;e<2;e++){free(images[e]);images[e]=NULL;if(chain[e])xrDestroySwapchain(chain[e]);chain[e]=XR_NULL_HANDLE;}
-    if(space)xrDestroySpace(space);if(session)xrDestroySession(session);if(instance)xrDestroyInstance(instance);
+    if(space)xrDestroySpace(space);if(session)xrDestroySession(session);
+    vr_input_shutdown();
+    if(instance)xrDestroyInstance(instance);
     space=XR_NULL_HANDLE;session=XR_NULL_HANDLE;instance=XR_NULL_HANDLE;
 }
 #endif

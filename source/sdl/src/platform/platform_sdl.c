@@ -819,6 +819,13 @@ int platform_poll_gamepads(unsigned short *joySlotState, int maxSlots)
                JOY_BUTTONS_PER_SLOT);
     }
 
+#if SONICR_VR
+    /* XR is a virtual P1 pad. Preserve every SDL slot and per-device binding. */
+    if (maxSlots > 0) {
+        joySlotState[0] |= VR_PadBits();
+        if (count == 0) count = 1;
+    }
+#endif
     return count;
 }
 

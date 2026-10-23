@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vr_xr.h"
+#include "vr_input.h"
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
@@ -96,6 +97,7 @@ static void capture(const char *name,int w,int h) {
     fclose(f);free(pixels);fprintf(stderr,"[vr-diag] capture=%s size=%dx%d\n",path,w,h);
 }
 int VR_Diagnostic(void) { return diagnostic; }
+unsigned short VR_PadBits(void) { return vr_input_read(g_joystickConfigWords); }
 int VR_AutoRace(void) { return diagnostic || autoRace; }
 void VR_DiagnosticInput(void) { if(diagnostic && drive)g_perPlayerInput[0]|=PAD_ACCEL; }
 int VR_EyeActive(void) { return eye>=0 && !identity; }
@@ -187,6 +189,7 @@ int VR_RaceFrame(void) {
         if(clockState.cut)haveCamera=0;
         if(!visible){vr_xr_end(0);continue;}
         frames++;
+        if(tick)vr_input_tick();
         return tick;
     }
 }
@@ -364,6 +367,7 @@ int VR_Present(void) {
         }
         if(!diagnostic)vr_xr_end(1);
     } while(!due);
+    vr_input_tick();
     layer=0;R_ResetState();return 1;
 }
 #endif

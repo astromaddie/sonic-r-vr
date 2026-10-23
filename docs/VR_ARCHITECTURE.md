@@ -156,6 +156,54 @@ player/camera positions and display interpolation samples. Use tick 180 for a
 moving-race capture. Synthetic diagnostic captures do not establish runtime tracking,
 controller input, or device performance.
 
+## Controller input
+
+VR builds create and attach one OpenXR action set before beginning the session.
+`XR_VALVE_frame_controller_interaction` is enabled only when advertised, with
+Frame bindings suggested first. The physical **right Menu/hamburger button**
+binds to Start/Pause through `/user/hand/right/input/menu/click`; System is never
+bound. An advertised Frame profile that rejects its binding table fails startup
+explicitly, instead of silently using a fallback whose Menu is on the left.
+Index and Touch suggestions provide fallback profiles on other controllers.
+Paths follow [Valve's Steam Frame input documentation](https://partner.steamgames.com/doc/steamhardware/steamframe/input).
+
+OpenXR inputs merge into native P1 pad slot 0, including when SDL reports no pad.
+The shared native `GCBTN_*` button table supplies the existing controls: A is
+jump/menu confirm; B or X is accelerate/menu back; Y is camera; bumpers/triggers
+are left/right brake; left stick and D-pad navigate/steer. Right stick has no
+native axis function and is not mapped. Start's physical binding stays fixed.
+SDL per-device mappings and saved configuration are unchanged. The existing SDL
+remapping screen does not remap the separate XR virtual pad.
+
+Actions sync every XR display frame in menus and races. Rising presses latch
+until the next native tick; the published pad snapshot remains stable across
+multiple native polls in that tick. Start publishes only its rising edge, so a
+held press cannot repeatedly activate subsequent native frames. Focus loss or
+failed synchronization clears held, pending and published input. Controls held
+on focus gain remain blocked until released; stick directions require neutral.
+
+Startup/profile-change diagnostics report suggested binding results, attached
+action set, active hand profiles and resolved Start sources. Optional
+`SONICR_VR_INPUT_TRACE=1` logs changes to the consumed native pad word without
+per-frame logging. These runtime observations establish binding state; physical
+press delivery must be checked separately.
+
+The host regression runs the production action lifecycle/sampling/mapping plus
+`InitJoystickConfig`, SDL platform polling, `ReadInput`, and
+`UpdatePerPlayerInput`, with only the XR device API and unrelated audio/pause
+callbacks replaced. It covers absent/present Frame extension, rejected Frame
+bindings and attach failures, right Menu, title/menu high-byte controls, P1
+race input without an SDL pad, short Start at 72/90/120 Hz, held Start, focus
+release/rearming, and unchanged customized SDL slot tables:
+
+```sh
+OPENXR_INCLUDE=/path/to/openxr/include tests/vr/run-input.sh
+```
+
+The SDK directory must contain `openxr/`; SDL2 and SDL2_mixer development headers
+must also be available. Tests create no GL window or Steam/OpenXR session, and
+remove their temporary executable afterward. `SONICR_VR=0` retains SDL-only input.
+
 ## Bounded runtime diagnostics
 
 `SONICR_VR_AUTORACE=1` starts the same production Resort Island race using the
@@ -233,10 +281,9 @@ contained 415 entries and stayed unchanged across the final build/test cycle
 These host build/render checks are separate from the packaged executable's
 Frame integration check below.
 
-Frame controller action bindings, a dedicated VR settings interface, alternate
-comfort modes, depth submission, actor interpolation, and sustained device
-performance are outside this renderer slice. Existing SDL keyboard/gamepad
-input remains the gameplay input path. No new UI assets or screens are added.
+A dedicated VR settings interface, alternate comfort modes, depth submission,
+actor interpolation and sustained device performance are outside this slice.
+No new UI assets or screens are added.
 
 ## Frame integration check, 2026-10-23
 
