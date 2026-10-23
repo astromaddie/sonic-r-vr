@@ -482,8 +482,13 @@ void BeginFrame(void)
      * clip volume as the GL projection so the same mapping occurs. */
     float dvClipX = -1.0f;
     float dvClipWidth = 2.0f;
-    float dvClipY = (float)g_screenHeightFull;           /* 480 */
-    float dvClipHeight = (float)g_screenHeightFull * 2.0f; /* 960 */
+    /* Opening logos render before SetViewportFromConfig initializes
+     * g_screenHeightFull. Fall back to the already-established logical mode
+     * height so the initial projection remains non-degenerate. */
+    int projectionHeight = g_screenHeightFull > 0
+        ? g_screenHeightFull : g_screenHeight;
+    float dvClipY = (float)projectionHeight;
+    float dvClipHeight = (float)projectionHeight * 2.0f;
 
     /* Map game screen coords → D3D clip coords:
      *   clipX = dvClipX + (screenX - dwX) / dwWidth * dvClipWidth

@@ -204,6 +204,19 @@ The SDK directory must contain `openxr/`; SDL2 and SDL2_mixer development header
 must also be available. Tests create no GL window or Steam/OpenXR session, and
 remove their temporary executable afterward. `SONICR_VR=0` retains SDL-only input.
 
+## Startup projection
+
+The opening Sega logo renders before a configured viewport initializes
+`g_screenHeightFull`. `BeginFrame` uses the established logical render height
+until that configured height is positive, avoiding equal top/bottom bounds in
+`glOrtho`. Positive configured heights retain the existing projection math.
+This applies to both flat and VR builds.
+
+`tests/vr/run-menu-projection.sh` calls the production `BeginFrame` with a fake
+GL/platform boundary. It checks nondegenerate startup bounds and screen-corner
+and center mappings, plus the unchanged positive-height path. The regression
+fails against the earlier implementation with zero startup viewport height.
+
 ## Bounded runtime diagnostics
 
 `SONICR_VR_AUTORACE=1` starts the same production Resort Island race using the
