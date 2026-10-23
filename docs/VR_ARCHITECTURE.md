@@ -230,10 +230,60 @@ rejected OFFHEAD_RENDER without its autorace/time-bound prerequisites with
 exit 2 before OpenXR initialization. The compiled production-input manifest
 contained 415 entries and stayed unchanged across the final build/test cycle
 (SHA-256 `6b70f521cc43b4bc0efc41db7789872f00fa36247986e19080e1bdc6af28482c`).
-These are host build/render checks; the runtime hooks do not themselves prove
-device rendering, tracking, visible submission or performance.
+These host build/render checks are separate from the packaged executable's
+Frame integration check below.
 
 Frame controller action bindings, a dedicated VR settings interface, alternate
 comfort modes, depth submission, actor interpolation, and sustained device
 performance are outside this renderer slice. Existing SDL keyboard/gamepad
 input remains the gameplay input path. No new UI assets or screens are added.
+
+## Frame integration check, 2026-10-23
+
+The installed ARM64 stereo package was built from clean source commit
+`7347a3ff936f53d4b6651701f92a2df052b57aa6`, with source digest
+`8bca00050e52d5960d50138b14ce89ee68a1a6a5b7c79bbed1dccf565024b4f1`.
+The game ELF SHA-256 is
+`58358f51903312d6193f8b4de72114d1f8e6b71180bf5fbf4df010cd81e3789b`;
+its build ID is `a1ce40094dbea0afeb13220e443dd31c32a98d07`.
+All 47 package manifest entries matched before and after the runs. The package
+retains 22 private libraries; game/probe dependency checks and the host Mesa
+GLX loader had empty stderr and no unresolved dependencies.
+
+Steam launched the actual packaged game as `SonicRVR` (appid 2861238290,
+rungameid 12288924881646518272), using `SteamLinuxRuntime_4-arm64`.
+The game created two 1728-by-1728 `GL_SRGB8_ALPHA8` swapchains with three images
+each on GL 4.3 compatibility, Mesa 26.3.0-devel, Zink/Turnip Adreno 750.
+SDL enumerated the mapped Steam Frame Controllers with 17 buttons.
+
+The bounded GPU check used dummy SDL audio, `SONICR_VR_AUTORACE=1`,
+`SONICR_VR_RUN_SECONDS=20`, `SONICR_VR_OFFHEAD_RENDER=1`, and a capture at tick
+90. It completed 90 native ticks, 143 display frames and 286 eye passes in
+5,568 ms including startup. All 143 located-eye pairs were valid, with no
+synthetic pose fallback; 142 frames had shouldRender=false. Every frame
+submitted zero composition layers. The captured eyes show textured Resort
+Island, the third-person Sonic chase view, HUD, and distinct eye views. These
+are GPU/image and lifecycle checks; the diagnostic's standby frame timing is
+not a display-performance measurement or visible projection test.
+
+With `OFFHEAD_RENDER=0` and an eight-second deadline, the normal runtime
+completed 395 wait frames (394 with shouldRender=false), zero native ticks,
+zero eye passes and zero submitted layers. Both runs ended through the normal
+OpenXR STOPPING/EXITING lifecycle. The compositor process stayed unchanged.
+
+The original `run-sonicr` Steam arguments and native compatibility settings
+were restored byte for byte, with no per-title diagnostic environment or
+wrapper remaining. All 449 original data files matched their pre-run hashes.
+The game generated a 160-byte `SONICR.INF`; its recorded prior absence was
+restored after the check. Game data remains outside the package at
+`/home/steamos/.local/share/sonic-r-vr/data`.
+
+Compact logs, manifests, settings-preservation evidence and lossless settled
+eye PNGs are retained under the ignored
+`build/frame-linux-aarch64/device-stereo` directory. Host captures and their
+reproduction record are in `build/frame-linux-aarch64/host-evidence`.
+Superseded builds and raw captures were removed after lossless conversion;
+the retained host artifacts occupy about 110 MiB less allocated space than the
+temporary trees. Removing the replaced device package and diagnostic scratch
+recovered 50,831,360 bytes, confirmed by the device filesystem's free-space
+change. The current package, source, original archive and owned data remain.

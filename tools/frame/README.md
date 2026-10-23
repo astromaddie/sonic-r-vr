@@ -25,15 +25,18 @@ are `run-sonicr` and `run-openxr-probe`. Import the owned game ZIP with the
 packaged `import_sonicr_data.py`; see the package `README.md`. Runtime data and
 saves stay in the XDG data directory outside the checkout.
 
-The host game screenshot and compact build/device logs are in
-`build/frame-linux-aarch64`; all of `/build/` is ignored. The corrected package
-is hash-verified on the Frame. Its Steam-launched OpenXR probe passed both
-sRGB eye colour readbacks and orderly shutdown. The flat game test establishes
-native process startup; a rendered race still needs separate device evidence.
+The host captures and compact build/device logs are in
+`build/frame-linux-aarch64`; all of `/build/` is ignored. The stereo package
+from `7347a3f` is installed and hash-verified on the Frame. Its Steam-launched
+game rendered Resort Island into both 1728-square sRGB eye swapchains,
+captured the settled third-person scene after 90 native ticks, and shut down
+orderly. The bounded GPU diagnostic submitted zero composition layers.
+The normal runtime separately held zero game ticks throughout an eight-second
+standby check. The normal launcher and original data state were restored.
 See [`docs/VR_ARCHITECTURE.md`](../../docs/VR_ARCHITECTURE.md) for the current
-stereo architecture, source checks, deterministic host captures, and remaining
-integration. `BUILD-METADATA.txt` identifies the flat/stereo build flag; earlier
-installed artifacts are separate from a newly built package.
+stereo architecture, exact artifact identity, host and device checks, and
+remaining limits. `BUILD-METADATA.txt` identifies the flat/stereo build flag;
+earlier installed artifacts are separate from a newly built package.
 
 The dependency stager follows each ELF's direct `DT_NEEDED` entries and recurses
 only into private libraries. System SDL2, graphics/display/audio platform roots,
