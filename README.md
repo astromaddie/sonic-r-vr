@@ -1,5 +1,13 @@
 # Sonic R
 
+This branch adds native Steam Frame development to
+[jnmartin84/sonic-r](https://github.com/jnmartin84/sonic-r). Start with the
+[Frame build and package guide](tools/frame/README.md). The initial package
+contains the flat ARM64 game and a separate OpenXR/GLX probe; the planned VR
+game uses a smoothed third-person chase camera with immediate head tracking.
+The [VR architecture](docs/VR_ARCHITECTURE.md) records the renderer, timing,
+camera design, and remaining integration gates.
+
 Here you will find a reimplementation of *Sonic R* (the 1998 Sega PC release),
 decompiled from the original executable and rebuilt as modern, portable C.
 It runs natively on **Windows, macOS, and Linux** (via SDL2) and on the **Sega Dreamcast**

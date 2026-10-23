@@ -7,6 +7,10 @@ build_root=/src/build/frame-linux-aarch64
 package_parent="$build_root/package"
 logs="$build_root/logs"
 mkdir -p "$package_parent" "$logs"
+if ! python3 tools/test_frame_package_runtime_libs.py > "$logs/runtime-libs-tests.log" 2>&1; then
+	tail -100 "$logs/runtime-libs-tests.log" >&2
+	exit 1
+fi
 if ! apt-get update -qq > "$logs/apt-update.log" 2>&1; then
 	tail -80 "$logs/apt-update.log" >&2
 	exit 1

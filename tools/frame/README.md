@@ -24,7 +24,17 @@ are `run-sonicr` and `run-openxr-probe`. Import the owned game ZIP with the
 packaged `import_sonicr_data.py`; see the package `README.md`. Runtime data and
 saves stay in the XDG data directory outside the checkout.
 
-The current verified host game screenshot and compact logs are in
-`build/frame-linux-aarch64`; all of `/build/` is ignored. The Frame install,
-OpenXR session, game performance/input/audio, and worn testing remain separate
-gates described in `docs/VR_ARCHITECTURE.md`.
+The verified host game screenshot and compact build/device logs are in
+`build/frame-linux-aarch64`; all of `/build/` is ignored. The initial package
+installation was hash-verified, but its Steam probe stopped at GLX visual
+selection. Read-only loader checks identified bundled C++ runtime shadowing
+that prevents the system Mesa driver from resolving required symbols. See
+[`docs/VR_ARCHITECTURE.md`](../../docs/VR_ARCHITECTURE.md) for the reproduction,
+dependency correction, and separate OpenXR/game validation gates.
+
+The dependency stager follows each ELF's direct `DT_NEEDED` entries and recurses
+only into private libraries. System SDL2, graphics/display/audio platform roots,
+C/C++ runtimes and readline stay on SteamOS. This avoids shadowing the newer
+Mesa driver's runtime with older build-image libraries. Run the focused
+regression checks with `python3 tools/test_frame_package_runtime_libs.py`;
+the production builder also runs them before packaging.

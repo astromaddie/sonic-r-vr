@@ -35,7 +35,7 @@ source_digest="$(cd "$repo" && {
 	find DATA/BIN/OPTION -maxdepth 1 -type f -name NET01.RAW -print
 	find DATA/SOUND/SFX -maxdepth 1 -type f -name 'REPLAY*.WAV' -print
 	printf '%s\n' source/sdl/Makefile tools/import_sonicr_data.py docs/VR_ARCHITECTURE.md \
-		tools/frame/OPENXR-SDK-LICENSE.txt
+		tools/frame/OPENXR-SDK-LICENSE.txt tools/test_frame_package_runtime_libs.py
 } | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}')"
 image_id="$(docker image inspect "$image" --format '{{.Id}}')"
 if [[ "$image" == mariokart64recomp-frame:latest && "$image_id" != "$expected_image_id" ]]; then
