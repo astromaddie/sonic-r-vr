@@ -1,3 +1,4 @@
+#include "vr/vr_projection.h"
 /**
  * render_character_d3d.c — D3D character model renderer for gameplay
  *
@@ -1786,8 +1787,8 @@ void SetupCharacterShadowQuad(Player *player)
     int sy0 = (sy0_raw + ((sy0_raw >> 31) & 0xFFF)) >> 12;  /* 0x0045a80d-0x0045a817 → ebp-0x90 */
 
     /* 0x0045a826-0x0045a846: Screen projection for corner 0 */
-    int scrX0 = g_screenCenterX + (sx0 * g_projScaleXCurrent) / depth0;   /* 0x0045a839-0x0045a841 → ebp-0x118 */
-    int scrY0 = g_screenCenterY - (sy0 * g_projScaleY) / depth0;          /* 0x0045a852-0x0045a866 → ebp-0x108 */
+    double scrX0 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, sx0, depth0);   /* 0x0045a839-0x0045a841 → ebp-0x118 */
+    double scrY0 = vr_decal_coord(g_screenCenterY, -g_projScaleY, sy0, depth0);          /* 0x0045a852-0x0045a866 → ebp-0x108 */
 
     /* Corner 1 screen */
     int c1_s0 = boundSize * vm_00s;                          /* 0x0045a874 → ebp-0xa0 */
@@ -1798,8 +1799,8 @@ void SetupCharacterShadowQuad(Player *player)
     int sy1_raw = c1_s1 + r0_s1a + vm_21_shift;             /* 0x0045a8ac-0x0045a8b4 */
     int sy1 = (sy1_raw + ((sy1_raw >> 31) & 0xFFF)) >> 12;  /* → ebp-0x88 */
 
-    int scrX1 = g_screenCenterX + (sx1 * g_projScaleXCurrent) / depth1;   /* → ebp-0x114 */
-    int scrY1 = g_screenCenterY - (sy1 * g_projScaleY) / depth1;          /* → ebp-0x104 */
+    double scrX1 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, sx1, depth1);   /* → ebp-0x114 */
+    double scrY1 = vr_decal_coord(g_screenCenterY, -g_projScaleY, sy1, depth1);          /* → ebp-0x104 */
 
     /* Corner 2 screen */
     int sx2_raw = negHalf * vm_10s + c1_s0 + vm_20_shift;   /* 0x0045a91d-0x0045a92c */
@@ -1808,8 +1809,8 @@ void SetupCharacterShadowQuad(Player *player)
     int sy2_raw = negHalf * vm_11s + c1_s1 + vm_21_shift;   /* 0x0045a941-0x0045a94d */
     int sy2 = (sy2_raw + ((sy2_raw >> 31) & 0xFFF)) >> 12;
 
-    int scrX2 = g_screenCenterX + (sx2 * g_projScaleXCurrent) / depth2;   /* → ebp-0x110 */
-    int scrY2 = g_screenCenterY - (sy2 * g_projScaleY) / depth2;          /* → ebp-0x100 */
+    double scrX2 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, sx2, depth2);   /* → ebp-0x110 */
+    double scrY2 = vr_decal_coord(g_screenCenterY, -g_projScaleY, sy2, depth2);          /* → ebp-0x100 */
 
     /* Corner 3 screen (remaining corner) */
     int sx3_raw;
@@ -1829,8 +1830,8 @@ void SetupCharacterShadowQuad(Player *player)
     sy3_raw = (sy3_r + ((sy3_r >> 31) & 0xFFF)) >> 12;
     int sy3 = sy3_raw;
 
-    int scrX3 = g_screenCenterX + (sx3 * g_projScaleXCurrent) / depth3;   /* → ebp-0x10c */
-    int scrY3 = g_screenCenterY - (sy3 * g_projScaleY) / depth3;          /* → ebp-0xfc */
+    double scrX3 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, sx3, depth3);   /* → ebp-0x10c */
+    double scrY3 = vr_decal_coord(g_screenCenterY, -g_projScaleY, sy3, depth3);          /* → ebp-0xfc */
 
     /* Depth adjustment: subtract 0x18 from all depths */
     /* 0x0045aabb-0x0045ab08 */
@@ -1886,19 +1887,15 @@ void SetupCharacterShadowQuad(Player *player)
          edx = (scrY0-scrY1) * (scrX2-scrX1)    = dy01 * dx21
          eax = (scrY2-scrY1) * (scrX0-scrX1)    = dy21 * dx01
        Then checks sign vs g_mirrorMode [0x6e9920]. */
-    int dy01 = scrY0 - scrY1;                            /* 0x0045a9b0-0x0045a9bc */
-    int dx21 = scrX2 - scrX1;                            /* 0x0045a9be-0x0045a9c4 */
-    int dx01 = scrX0 - scrX1;                            /* 0x0045a9c9-0x0045a9d5 */
-    int dy21 = scrY2 - scrY1;                            /* 0x0045a9db-0x0045a9e1 */
-    int cross_edx = dy01 * dx21;                         /* 0x0045a9c6 */
-    int cross_eax = dy21 * dx01;                         /* 0x0045a9e9 */
+    double cross = vr_decal_cross(scrY0-scrY1, scrX2-scrX1,
+                                  scrY2-scrY1, scrX0-scrX1);
     if (g_mirrorMode != 0) {
-        if ((cross_eax - cross_edx) < 0) {
+        if ((-cross) < 0) {
             return;        /* 0x0045a9f9: sub eax,edx; jl exit */
         }
     }
     else {
-        if ((cross_edx - cross_eax) < 0) {
+        if (cross < 0) {
             return;        /* 0x0045a9ff: sub edx,eax; jl exit */
         }
     }
@@ -1935,8 +1932,8 @@ void SetupCharacterShadowQuad(Player *player)
 
     /* Per-vertex: screen pos, depth, UV, fog alpha */
     int depths[4] = { depth0, depth1, depth2, depth3 };
-    int scrXs[4] = { scrX0, scrX1, scrX2, scrX3 };
-    int scrYs[4] = { scrY0, scrY1, scrY2, scrY3 };
+    double scrXs[4] = { scrX0, scrX1, scrX2, scrX3 };
+    double scrYs[4] = { scrY0, scrY1, scrY2, scrY3 };
     float uvUs[4] = { shadowU, shadowU + (float)ROM_UV_OFFSET,
                       shadowU + (float)ROM_UV_OFFSET, shadowU };
     float uvVs[4] = { shadowV, shadowV,

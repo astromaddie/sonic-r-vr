@@ -156,6 +156,41 @@ player/camera positions and display interpolation samples. Use tick 180 for a
 moving-race capture. Synthetic diagnostic captures do not establish runtime tracking,
 controller input, or device performance.
 
+### Ground decals and water
+
+Ground-facing quads use fractional projected coordinates in eye passes too:
+`SubmitGroundShadow` (pickup/balloon shadows), `DrawFootShadows` (foot/boost
+trails), `SetupCharacterShadowQuad`, `DrawMovingPickupShadow`, and
+`DrawGroundParticlesD3D` (water-ring/snow decals). Their culling uses those same
+coordinates. Native depth/fog biases and flat-mode integer projection remain
+unchanged. Foot-shadow integer scratch is still populated, while the eye uses
+local fractional corners. Native culling retains integer products (double
+locals preserve every integer corner before emission); a near-collinear
+production control guards against float cancellation changing its sign. The
+ground particle renderer may clear a culled slot only on the canonical pass; an eye cannot remove a particle for its partner.
+
+Water is the upstream port's animated, tinted panorama reflection plus bottom
+fill, with ambient `GENERAL/PLOP2.RAW` ring decals loaded by `LoadPlopSprites`.
+It has no separate continuous water-surface texture. The SDL reflection pass
+now explicitly scopes opaque/modulate/depth-write-off state, followed by its
+existing additive tint, and restores the caller's state just as the DC path
+does. This does not introduce a new water material. Baseline native and eye
+Resort Island captures already show the reflection and blue tint.
+
+`tests/vr/run-ground-projection.sh` calls the five production ground emitters
+across 81 camera positions and both asymmetric principal points, repeating in
+reverse eye order (324 passes). It checks nonzero area, canonical particle
+ownership, water state restoration/independence and animation, and depth at
+324 interior samples against the actual track near-clipping emitter, including
+a large underlying track quad at grazing distance and a near-clipped track.
+`--flat` compares native draw streams; `SONICR_TEST_VR=0` checks the flat build.
+`SONICR_TEST_LEGACY_REF=c4c0698` runs the same fixture against the three previous
+renderer translation units. `--particle` and `--water` isolate those state
+regressions. These CPU checks establish geometry/state behavior, not wearer
+comfort or complete GPU coverage. Use the real-data temporal stereo diagnostic
+and its uninstrumented endpoint control before headset acceptance. Its state
+fingerprint now includes ground particle slots/visibility.
+
 ### Stereo sprite regression
 
 Eye passes retain fractional billboard corners for rings, collect effects,

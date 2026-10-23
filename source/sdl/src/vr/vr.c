@@ -70,6 +70,12 @@ static uint64_t simulationFingerprint(void) {
     h=hashBytes(h,g_camStateTable,sizeof(CamStateEntry)*4);
     h=hashBytes(h,g_collectEffectBuf,sizeof(CollectEffect)*COLLECT_EFFECT_COUNT);
     h=hashBytes(h,g_precipParticles,sizeof(PrecipParticle)*128);
+    /* Ground/water particles have render-time native culling; eye repeats
+     * must not consume their lifetime or remove them for the other eye. */
+    extern int g_renderStateBlock[16];
+    extern GroundParticle g_particleSlots[16];
+    h=hashBytes(h,g_renderStateBlock,sizeof(g_renderStateBlock));
+    h=hashBytes(h,g_particleSlots,sizeof(g_particleSlots));
     h=hashBytes(h,&g_totalFrames,sizeof(g_totalFrames));
     h=hashBytes(h,&g_randomRingIdx,sizeof(g_randomRingIdx));
     return h;

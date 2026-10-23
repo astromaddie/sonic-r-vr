@@ -957,15 +957,16 @@ static void RenderWaterBandSWRipple(int vpIdx)
      * silently delete the entire depth ramp. See project_dc_add_signed.
      *
      * PopState restores the ambient state after the fill. */
-    R_PushState();
+
 #endif
+    /* The reflected surface is opaque modulate in every backend. Do not
+     * inherit a previous viewport/effect's additive material or depth writes. */
+    R_PushState();
     R_SetTexture(tpage);
     R_SetFilter(R_FILTER_NEAREST);
-#ifdef SONICR_DC
     R_SetDepthWrite(0);
     R_SetBlendMode(R_BLEND_NONE);
     R_SetTexEnv(R_TEXENV_MODULATE);
-#endif
 
     float halfSubStrip = subStripWidth * 0.5f;
 
@@ -1134,7 +1135,6 @@ static void RenderWaterBandSWRipple(int vpIdx)
     /* DC bakes the teal ramp into the band+fill oargb offset above, so it
      * needs no additive overlay (which would force the water onto the TR
      * list). Just restore the ambient state pinned at the top. */
-    R_PopState();
 #else
     /* Depth tint — the buffer builder's per-row teal ramp (0x46F6B4):
      * (R0,G3,B3)/565 = #000C18 at the art's bottom row (horizon — the
@@ -1176,6 +1176,7 @@ static void RenderWaterBandSWRipple(int vpIdx)
 
     R_PopState();
 #endif /* SONICR_DC */
+    R_PopState();
 }
 #endif /* WATER_RIPPLE_SW */
 
@@ -1498,23 +1499,23 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
     /* Camera X/Y + screen projection for all 4 vertices (stride-4) */
     int camX0 = (g_viewMtx[0]*dx0 + g_viewMtx[4]*dy0 + g_viewMtx[8]*dz0) / 4096;
     int camY0 = (g_viewMtx[1]*dx0 + g_viewMtx[5]*dy0 + g_viewMtx[9]*dz0) / 4096;
-    int sx0 = g_screenCenterX + (g_projScaleXCurrent * camX0) / camZ0;
-    int sy0 = g_screenCenterY - (g_projScaleY * camY0) / camZ0;
+    double sx0 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX0, camZ0);
+    double sy0 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY0, camZ0);
 
     int camX1 = (g_viewMtx[0]*dx1 + g_viewMtx[4]*dy1 + g_viewMtx[8]*dz1) / 4096;
     int camY1 = (g_viewMtx[1]*dx1 + g_viewMtx[5]*dy1 + g_viewMtx[9]*dz1) / 4096;
-    int sx1 = g_screenCenterX + (g_projScaleXCurrent * camX1) / camZ1;
-    int sy1 = g_screenCenterY - (g_projScaleY * camY1) / camZ1;
+    double sx1 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX1, camZ1);
+    double sy1 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY1, camZ1);
 
     int camX2 = (g_viewMtx[0]*dx2 + g_viewMtx[4]*dy2 + g_viewMtx[8]*dz2) / 4096;
     int camY2 = (g_viewMtx[1]*dx2 + g_viewMtx[5]*dy2 + g_viewMtx[9]*dz2) / 4096;
-    int sx2 = g_screenCenterX + (g_projScaleXCurrent * camX2) / camZ2;
-    int sy2 = g_screenCenterY - (g_projScaleY * camY2) / camZ2;
+    double sx2 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX2, camZ2);
+    double sy2 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY2, camZ2);
 
     int camX3 = (g_viewMtx[0]*dx3 + g_viewMtx[4]*dy3 + g_viewMtx[8]*dz3) / 4096;
     int camY3 = (g_viewMtx[1]*dx3 + g_viewMtx[5]*dy3 + g_viewMtx[9]*dz3) / 4096;
-    int sx3 = g_screenCenterX + (g_projScaleXCurrent * camX3) / camZ3;
-    int sy3 = g_screenCenterY - (g_projScaleY * camY3) / camZ3;
+    double sx3 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX3, camZ3);
+    double sy3 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY3, camZ3);
 
     /* Screen clip: reject if ALL 4 verts outside any edge */
     if (sx0 < g_clipLeft && sx1 < g_clipLeft && sx2 < g_clipLeft && sx3 < g_clipLeft) {
@@ -1531,15 +1532,14 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
     }
 
     /* Backface cull (with mirror mode) */
-    int mcross1 = (sy0 - sy1) * (sx2 - sx1);               /* 0x4610AE */
-    int mcross2 = (sy2 - sy1) * (sx0 - sx1);
+    double cross = vr_decal_cross(sy0-sy1, sx2-sx1, sy2-sy1, sx0-sx1);
     if (g_mirrorMode != 0) {
-        if ((mcross2 - mcross1) < 0) {
+        if ((-cross) < 0) {
             return;
         }
     }
     else {
-        if ((mcross1 - mcross2) < 0) {
+        if (cross < 0) {
             return;
         }
     }
@@ -1569,8 +1569,8 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
         {0.0f, 0.1875f}, {0.125f, 0.1875f},
         {0.125f, 0.3125f}, {0.0f, 0.3125f}
     };
-    int sxArr[4] = {sx0, sx1, sx2, sx3};
-    int syArr[4] = {sy0, sy1, sy2, sy3};
+    double sxArr[4] = {sx0, sx1, sx2, sx3};
+    double syArr[4] = {sy0, sy1, sy2, sy3};
     int czArr[4] = {camZ0, camZ1, camZ2, camZ3};
     RenderVertex quad[4];
     int allFogged = 1;      /* every vertex alpha 0 -> whole shadow invisible */

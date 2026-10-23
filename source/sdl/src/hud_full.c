@@ -843,6 +843,7 @@ void DrawFootShadows(void)
             continue;
         }
 
+        double sx[4], sy[4];
         /* Transform vertex 0 (edi in binary) */
         int dX, dY, dZ, cz0, cx0, cy0;
         dX = v0base[5] - g_camIntX;   /* world X at offset 0x14 */
@@ -857,8 +858,10 @@ void DrawFootShadows(void)
         cx0 = (g_viewMtx00 * dX + g_viewMtx10 * dY + g_viewMtx20 * dZ) / 4096;
         cy0 = (g_viewMtx01 * dX + g_viewMtx11 * dY + g_viewMtx21 * dZ) / 4096;
 
-        v0base[0] = g_screenCenterX + (g_projScaleXCurrent * cx0) / cz0;
-        v0base[1] = g_screenCenterY - (g_projScaleY * cy0) / cz0;
+        sx[0] = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx0, cz0);
+        v0base[0] = (int)sx[0];
+        sy[0] = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy0, cz0);
+        v0base[1] = (int)sy[0];
         v0base[12] = cz0 - 0x1C;  /* adjusted depth at offset 0x30 */
         if (v0base[12] < 1) {
             continue;
@@ -878,8 +881,10 @@ void DrawFootShadows(void)
         cx1 = (g_viewMtx00 * dX + g_viewMtx10 * dY + g_viewMtx20 * dZ) / 4096;
         cy1 = (g_viewMtx01 * dX + g_viewMtx11 * dY + g_viewMtx21 * dZ) / 4096;
 
-        v1base[0] = g_screenCenterX + (g_projScaleXCurrent * cx1) / cz1;
-        v1base[1] = g_screenCenterY - (g_projScaleY * cy1) / cz1;
+        sx[1] = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx1, cz1);
+        v1base[0] = (int)sx[1];
+        sy[1] = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy1, cz1);
+        v1base[1] = (int)sy[1];
         v1base[12] = cz1 - 0x1C;
         if (v1base[12] < 1) {
             continue;
@@ -899,23 +904,19 @@ void DrawFootShadows(void)
         cx2 = (g_viewMtx00 * dX + g_viewMtx10 * dY + g_viewMtx20 * dZ) / 4096;
         cy2 = (g_viewMtx01 * dX + g_viewMtx11 * dY + g_viewMtx21 * dZ) / 4096;
 
-        v2base[0] = g_screenCenterX + (g_projScaleXCurrent * cx2) / cz2;
-        v2base[1] = g_screenCenterY - (g_projScaleY * cy2) / cz2;
+        sx[2] = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx2, cz2);
+        v2base[0] = (int)sx[2];
+        sy[2] = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy2, cz2);
+        v2base[1] = (int)sy[2];
         v2base[12] = cz2 - 0x1C;
         if (v2base[12] < 1) {
             continue;
         }
 
         /* Backface cull using vertices 0, 1, 2 */
-        int cross;
-        if (g_mirrorMode == 0) {
-            cross = (v0base[1] - v1base[1]) * (v2base[0] - v1base[0])
-                  - (v0base[0] - v1base[0]) * (v2base[1] - v1base[1]);
-        }
-        else {
-            cross = (v2base[1] - v1base[1]) * (v0base[0] - v1base[0])
-                  - (v0base[1] - v1base[1]) * (v2base[0] - v1base[0]);
-        }
+        double cross = vr_decal_cross(sy[0]-sy[1], sx[2]-sx[1],
+                                      sx[0]-sx[1], sy[2]-sy[1]);
+        if (g_mirrorMode != 0) cross = -cross;
         if (cross < 0) {
             continue;
         }
@@ -934,28 +935,30 @@ void DrawFootShadows(void)
         cx3 = (g_viewMtx00 * dX + g_viewMtx10 * dY + g_viewMtx20 * dZ) / 4096;
         cy3 = (g_viewMtx01 * dX + g_viewMtx11 * dY + g_viewMtx21 * dZ) / 4096;
 
-        v3base[0] = g_screenCenterX + (g_projScaleXCurrent * cx3) / cz3;
-        v3base[1] = g_screenCenterY - (g_projScaleY * cy3) / cz3;
+        sx[3] = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx3, cz3);
+        v3base[0] = (int)sx[3];
+        sy[3] = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy3, cz3);
+        v3base[1] = (int)sy[3];
         v3base[12] = cz3 - 0x1C;
         if (v3base[12] < 1) {
             continue;
         }
         /* Clip test */
-        if (!(g_clipLeft <= v0base[0] || g_clipLeft <= v1base[0] ||
-              g_clipLeft <= v2base[0] || g_clipLeft <= v3base[0])) {
+        if (!(g_clipLeft <= sx[0] || g_clipLeft <= sx[1] ||
+              g_clipLeft <= sx[2] || g_clipLeft <= sx[3])) {
             continue;
         }
 
-        if (!(v0base[0] <= g_clipRight || v1base[0] <= g_clipRight ||
-              v2base[0] <= g_clipRight || v3base[0] <= g_clipRight)) {
+        if (!(sx[0] <= g_clipRight || sx[1] <= g_clipRight ||
+              sx[2] <= g_clipRight || sx[3] <= g_clipRight)) {
             continue;
         }
-        if (!(g_clipTop <= v0base[1] || g_clipTop <= v1base[1] ||
-              g_clipTop <= v2base[1] || g_clipTop <= v3base[1])) {
+        if (!(g_clipTop <= sy[0] || g_clipTop <= sy[1] ||
+              g_clipTop <= sy[2] || g_clipTop <= sy[3])) {
             continue;
         }
-        if (!(v0base[1] <= g_clipBottom || v1base[1] <= g_clipBottom ||
-              v2base[1] <= g_clipBottom || v3base[1] <= g_clipBottom)) {
+        if (!(sy[0] <= g_clipBottom || sy[1] <= g_clipBottom ||
+              sy[2] <= g_clipBottom || sy[3] <= g_clipBottom)) {
             continue;
         }
         /* Build 4 vertices with fog/alpha */
@@ -981,8 +984,8 @@ void DrawFootShadows(void)
                 alpha = SRABS(raw);
             }
 
-            quadVerts[vi].sx = (float)vertPtrs[vi][0];
-            quadVerts[vi].sy = (float)vertPtrs[vi][1];
+            quadVerts[vi].sx = sx[vi];
+            quadVerts[vi].sy = sy[vi];
             quadVerts[vi].sz = fDepth;
             quadVerts[vi].rhw = reciprocal((float)adjDepth); // 1.0f / (float)adjDepth;
             quadVerts[vi].color = ((unsigned int)alpha << 24) | VERTEX_WHITE_RGB;
@@ -2083,10 +2086,10 @@ void DrawMovingPickupShadow(int worldX, int worldY, int worldZ, int scale)
     vy[3] = (nsFy + nsUy + ctr_y_sc) / 4096;
 
     /* Perspective projection */
-    int sx[4], sy[4];
+    double sx[4], sy[4];
     for (int i = 0; i < 4; i++) {                                       /* 0x45b758-0x45b99a */
-        sx[i] = g_screenCenterX + (g_projScaleXCurrent * vx[i]) / depth[i];
-        sy[i] = g_screenCenterY - (g_projScaleY * vy[i]) / depth[i];
+        sx[i] = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, vx[i], depth[i]);
+        sy[i] = vr_decal_coord(g_screenCenterY, -g_projScaleY, vy[i], depth[i]);
     }
 
     /* Viewport clipping */                                /* 0x45b99c-0x45ba4a */
@@ -2104,9 +2107,9 @@ void DrawMovingPickupShadow(int worldX, int worldY, int worldZ, int scale)
     }
 
     /* Backface cull */                                    /* 0x45b8f7-0x45b912 */
-    int cross1 = (sx[2] - sx[1]) * (sy[0] - sy[1]);
-    int cross2 = (sy[2] - sy[1]) * (sx[0] - sx[1]);
-    int facing = (g_mirrorMode != 0) ? (cross2 - cross1) : (cross1 - cross2);
+    double facing = vr_decal_cross(sx[2]-sx[1], sy[0]-sy[1],
+                                   sy[2]-sy[1], sx[0]-sx[1]);
+    if (g_mirrorMode != 0) facing = -facing;
     if (facing < 0) {
         return;
     }
@@ -2303,23 +2306,23 @@ void DrawGroundParticlesD3D(int vpIdx)
 
         cx = (g_viewMtx00 * dX0 + camY_R0 + g_viewMtx20 * dZ0) / 4096;
         cy = (g_viewMtx01 * dX0 + camY_R1 + g_viewMtx21 * dZ0) / 4096;
-        int sx0 = g_screenCenterX + (g_projScaleXCurrent * cx) / cz0;
-        int sy0 = g_screenCenterY - (g_projScaleY * cy) / cz0;
+        double sx0 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx, cz0);
+        double sy0 = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy, cz0);
 
         cx = (g_viewMtx00 * dX1 + camY_R0 + g_viewMtx20 * dZ1) / 4096;
         cy = (g_viewMtx01 * dX1 + camY_R1 + g_viewMtx21 * dZ1) / 4096;
-        int sx1 = g_screenCenterX + (g_projScaleXCurrent * cx) / cz1;
-        int sy1 = g_screenCenterY - (g_projScaleY * cy) / cz1;
+        double sx1 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx, cz1);
+        double sy1 = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy, cz1);
 
         cx = (g_viewMtx00 * dX2 + camY_R0 + g_viewMtx20 * dZ2) / 4096;
         cy = (g_viewMtx01 * dX2 + camY_R1 + g_viewMtx21 * dZ2) / 4096;
-        int sx2 = g_screenCenterX + (g_projScaleXCurrent * cx) / cz2;
-        int sy2 = g_screenCenterY - (g_projScaleY * cy) / cz2;
+        double sx2 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx, cz2);
+        double sy2 = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy, cz2);
 
         cx = (g_viewMtx00 * dX3 + camY_R0 + g_viewMtx20 * dZ3) / 4096;
         cy = (g_viewMtx01 * dX3 + camY_R1 + g_viewMtx21 * dZ3) / 4096;
-        int sx3 = g_screenCenterX + (g_projScaleXCurrent * cx) / cz3;
-        int sy3 = g_screenCenterY - (g_projScaleY * cy) / cz3;
+        double sx3 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, cx, cz3);
+        double sy3 = vr_decal_coord(g_screenCenterY, -g_projScaleY, cy, cz3);
 
         /* Viewport clip test */
         if (!(g_clipLeft <= sx0 || g_clipLeft <= sx1 || g_clipLeft <= sx2 || g_clipLeft <= sx3)) {
@@ -2364,7 +2367,11 @@ void DrawGroundParticlesD3D(int vpIdx)
 
     clearCheck:
         /* Clear slot if owned by current viewport and it failed depth test */
-        if (g_particleOwner[slot] == vpIdx) {
+        if (g_particleOwner[slot] == vpIdx
+#if SONICR_VR
+            && !VR_Repeat()
+#endif
+        ) {
             g_renderStateBlock[slot] = 0;
         }
     next:
