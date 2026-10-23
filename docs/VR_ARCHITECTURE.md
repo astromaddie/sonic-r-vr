@@ -347,3 +347,35 @@ the retained host artifacts occupy about 110 MiB less allocated space than the
 temporary trees. Removing the replaced device package and diagnostic scratch
 recovered 50,831,360 bytes, confirmed by the device filesystem's free-space
 change. The current package, source, original archive and owned data remain.
+
+## Controller and startup follow-up, 2026-10-23
+
+The installed follow-up package includes controller commit `76b8aa2` and the
+startup projection fix at clean source commit
+`6e9f6017e7a0f5c43d8d8a8ac23db96c5f2237a3`. Its game ELF SHA-256 is
+`a09ea9228ad73dfbc3520ee50587a857473c3a6bbc90621f76f4e4c75f493b01`,
+with build ID `6403fcee79f61f4156bd7435dc91b56c49be9c75` and source-input
+digest `820c7d20e4762d4898c4873b3f526a3fe38ae1542e6196d2f35b1b01c91b08a1`.
+All 51 package entries matched on the Frame, and dependency checks had no
+unresolved libraries or stderr. The package includes its incremental-build
+provenance: three rebuilt translation units, 359 audited unchanged objects,
+and the original full compiler transcript. The packaged host race diagnostic
+again completed 180 ticks, 538 display frames and 1,076 eye passes with
+unchanged simulation state across repeated render passes.
+
+At 19:09 JST, Steam launched this package through the existing `SonicRVR`
+entry with dummy audio, normal startup, an eight-second deadline,
+`MESA_DEBUG=1`, and autorace/off-head/diagnostic rendering disabled. SteamVR
+accepted Frame/Index/Touch binding suggestions (17/11/12 bindings, each result
+0), attached the action set with the Frame extension enabled, and created
+two 2160-by-2160 sRGB eye swapchains. The headset stayed in standby: 660 waits,
+659 standby frames, zero native ticks, rendered eyes or submitted layers.
+The deadline fired at 8,006 ms, followed by STOPPING, IDLE and EXITING; Steam
+removed the game processes at 19:09:13 without termination signals. Neither
+the game nor XR-client log contained the previous `glOrtho` / `0x501` error.
+
+The original launcher arguments/settings bytes and modes were restored,
+the temporary wrapper was removed, and the per-title environment file remains
+absent. All 449 original game-data files matched exactly after the run; only
+the newly generated, previously absent `SONICR.INF` was removed. The shared
+Frame slot was then released to the next queued session.
