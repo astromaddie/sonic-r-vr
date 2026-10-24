@@ -65,11 +65,19 @@ typedef struct { float left,right,up,down; } VRProjection;
 static inline VRProjection vr_projection(VRFov f) {
     return (VRProjection){tanf(f.left),tanf(f.right),tanf(f.up),tanf(f.down)};
 }
-static inline void vr_project_cached(VRVec p,VRProjection f,float *x,float *y) {
+/* GCC -Os otherwise keeps this tiny per-vertex helper out of line, passing
+ * both structs and spilling its output pointers. Keep its arithmetic intact. */
+#if defined(__GNUC__) || defined(__clang__)
+#define VR_PROJECT_INLINE static inline __attribute__((always_inline))
+#else
+#define VR_PROJECT_INLINE static inline
+#endif
+VR_PROJECT_INLINE void vr_project_cached(VRVec p,VRProjection f,float *x,float *y) {
     float l=f.left,r=f.right,u=f.up,d=f.down;
     *x=2*p.x/(-p.z*(r-l))-(r+l)/(r-l);
     *y=2*p.y/(-p.z*(u-d))-(u+d)/(u-d);
 }
+#undef VR_PROJECT_INLINE
 /* Native s contains each producer's depth bias and far-divisor adjustment.
  * A shared reciprocal map makes unbiased planes affine in screen space while
  * retaining the ordering of those biases. Reversed depth is computed directly,

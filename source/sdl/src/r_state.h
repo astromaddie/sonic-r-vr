@@ -83,6 +83,8 @@ void R_FlushState(void);
 #if SONICR_VR
 void R_EndBatch(void);
 void R_SetVRBatching(int enabled);
+/* Arm at most one early flush after N race-eye fans; zero disables/resets. */
+void R_SetVREarlyFlush(unsigned draws);
 void R_SetVRDepthReversed(int enabled);
 #else
 static inline void R_EndBatch(void) {}

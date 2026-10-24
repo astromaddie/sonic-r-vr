@@ -320,6 +320,24 @@ baseline `r_gl_backend.c`; extracted legacy fan and vertex-emitter hashes are ve
 Matched real-game pixels and capture-free total frame timing remain required
 for acceptance; CPU fixture batch-count reduction alone is insufficient.
 
+`SONICR_VR_EARLY_FLUSH_DRAWS=N` defaults to 2048; explicit 0 disables it.
+After N original backend fans in each race-eye target, it closes the
+current batch and issues one `glFlush`, allowing the driver to submit earlier
+work while CPU rendering continues. It never adds a finish/readback or changes
+vertex/state order. The allowance resets per target and is disabled on release,
+shutdown, native/identity and menu paths; frames below the threshold add no
+flush. Startup and performance logs record `early_flush_draws`. Use the same
+binary with 0 versus 2048, matching scene,
+calibrated FOV and completion settings. Strict GL/stream tests cover both batch
+modes, threshold crossing, repeated eyes and completion/capture ordering;
+all 26 matched actual GPU captures remained byte-identical. At 2160² with
+calibrated ~109° FOV, a moving clear fixture measured 116.66 FPS with 0 versus
+119.08 with 2048 before helper inlining; 256 regressed to 114.05. Inlining plus 2048
+measured 119.23 FPS in clear, 119.65 in rain, and 118.38 in snow over
+33 steady windows each. These bounded zero-layer runs measure application
+cadence; occasional missed frame intervals remain, and complete-race display
+pacing needs compositor timing.
+
 Race rendering uses a shared completion by default;
 `SONICR_VR_PAIRED_COMPLETE=0` retains the established per-eye control path. Each eye still ends and
 flushes its own picture. Both acquired/waited images remain owned until one

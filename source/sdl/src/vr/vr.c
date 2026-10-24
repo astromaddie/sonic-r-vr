@@ -65,6 +65,7 @@ static double perfWindow,perfLastFrame,perfSimStart,perfWeatherStart,perfMaxInte
 static double perfMs[8],perfWeatherMs[3];
 static unsigned perfFrames,perfTicks,perfDraws[3],perfWeatherDraws[3],perfSubmits[3],perfVertices[3];
 static int batching=1;
+static unsigned earlyFlushDraws;
 static int pairedComplete;
 static int perspectiveDepth;
 static float depthNear;
@@ -86,11 +87,11 @@ static void perfReport(void) {
     if(!perfEnabled)return;
     double now=perfNow(),elapsed=now-perfWindow;
     if(elapsed<1000 || !perfFrames)return;
-    fprintf(stderr,"[vr-perf] track=%d weather=%d tod=%d frames=%u ticks=%u wall_ms=%.3f fps=%.2f tick_hz=%.2f max_interval_ms=%.3f begin_ms=%.3f sim_ms=%.3f native_ms=%.3f acquire_ms=%.3f eyes_ms=%.3f release_ms=%.3f end_ms=%.3f mirror_ms=%.3f draws=%u,%u,%u weather_draws=%u,%u,%u gl_submits=%u,%u,%u gl_vertices=%u,%u,%u batch=%d paired_complete=%d fixture_replay=%d replay_pad=%u weather_ms=%.3f,%.3f,%.3f synthetic=%d observer=%d\n",
+    fprintf(stderr,"[vr-perf] track=%d weather=%d tod=%d frames=%u ticks=%u wall_ms=%.3f fps=%.2f tick_hz=%.2f max_interval_ms=%.3f begin_ms=%.3f sim_ms=%.3f native_ms=%.3f acquire_ms=%.3f eyes_ms=%.3f release_ms=%.3f end_ms=%.3f mirror_ms=%.3f draws=%u,%u,%u weather_draws=%u,%u,%u gl_submits=%u,%u,%u gl_vertices=%u,%u,%u batch=%d paired_complete=%d early_flush_draws=%u fixture_replay=%d replay_pad=%u weather_ms=%.3f,%.3f,%.3f synthetic=%d observer=%d\n",
         g_trackId,g_weatherType,g_timeOfDay,perfFrames,perfTicks,elapsed,perfFrames*1000/elapsed,perfTicks*1000/elapsed,perfMaxInterval,
         perfMs[0]/perfFrames,perfMs[1]/perfFrames,perfMs[2]/perfFrames,perfMs[3]/perfFrames,perfMs[4]/perfFrames,perfMs[5]/perfFrames,perfMs[6]/perfFrames,perfMs[7]/perfFrames,
         perfDraws[0],perfDraws[1],perfDraws[2],perfWeatherDraws[0],perfWeatherDraws[1],perfWeatherDraws[2],
-        perfSubmits[0],perfSubmits[1],perfSubmits[2],perfVertices[0],perfVertices[1],perfVertices[2],batching,pairedComplete,fixtureReplay,replayIndex,
+        perfSubmits[0],perfSubmits[1],perfSubmits[2],perfVertices[0],perfVertices[1],perfVertices[2],batching,pairedComplete,earlyFlushDraws,fixtureReplay,replayIndex,
         perfWeatherMs[0]/perfFrames,perfWeatherMs[1]/perfFrames,perfWeatherMs[2]/perfFrames,diagnostic,diagnostic || runtimeDump || stereoCheck);
     perfWindow=now;perfFrames=perfTicks=0;perfMaxInterval=0;
     memset(perfMs,0,sizeof perfMs);memset(perfWeatherMs,0,sizeof perfWeatherMs);
@@ -250,6 +251,9 @@ int VR_Init(void) {
     fprintf(stderr,"[vr] paired_race_completion=%d (SONICR_VR_PAIRED_COMPLETE=0 disables)\n",pairedComplete);
     batching=!(getenv("SONICR_VR_BATCH") && !strcmp(getenv("SONICR_VR_BATCH"),"0"));
     R_SetVRBatching(batching);
+    earlyFlushDraws=(unsigned)setting("SONICR_VR_EARLY_FLUSH_DRAWS",2048,0,1000000);
+    R_SetVREarlyFlush(0);
+    fprintf(stderr,"[vr] early_flush_draws=%u (0 disables; at most one per race eye)\n",earlyFlushDraws);
     fprintf(stderr,"[vr] adjacent_eye_batching=%d (SONICR_VR_BATCH=0 disables)\n",batching);
     perfEnabled=getenv("SONICR_VR_PERF") && !strcmp(getenv("SONICR_VR_PERF"),"1");
     diagnostic=getenv("SONICR_VR_DIAGNOSTIC") && strcmp(getenv("SONICR_VR_DIAGNOSTIC"),"1")==0;
@@ -295,7 +299,7 @@ int VR_Init(void) {
 }
 void VR_Shutdown(void) {
     if(!initialized)return;
-    R_EndBatch();
+    R_SetVREarlyFlush(0);
     setDepthMode(0);
     resetReplay();fixtureReplay=0;
     initialized=0;
@@ -389,6 +393,7 @@ static void setDepthMode(int enabled) {
 static void target(int e) {
     R_EndBatch();
     eye=e;cacheEyeProjection();R_ResetState();
+    R_SetVREarlyFlush(modeRace && !identity ? earlyFlushDraws : 0);
     setDepthMode(perspectiveDepth && modeRace && !identity);
     depthNear=vr_depth_near(g_farClipFloat);
     GLuint color=diagnostic?diagTexture[e]:vr_xr_acquire(e);
@@ -419,13 +424,13 @@ static void target(int e) {
     glDepthMask(GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 }
 static void unbindEye(void) {
-    R_EndBatch();
+    R_SetVREarlyFlush(0);
     setDepthMode(0);
     glBindFramebuffer(GL_FRAMEBUFFER,0);eye=-1;
     glDrawBuffer(GL_BACK);glReadBuffer(GL_BACK);
 }
 static void release(void) {
-    R_EndBatch();
+    R_SetVREarlyFlush(0);
     setDepthMode(0);
     glBindFramebuffer(GL_FRAMEBUFFER,0);if(!diagnostic)vr_xr_release(eye);eye=-1;
     glDrawBuffer(GL_BACK);glReadBuffer(GL_BACK);

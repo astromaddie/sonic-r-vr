@@ -138,6 +138,7 @@ static void GL_ApplyTpageFilter(int tp)
 #if SONICR_VR
 static int s_vrBatching=1,s_batchOpen,s_vrDepthReversed;
 static unsigned s_batchVertices;
+static unsigned s_earlyFlushRemaining;
 static uint32_t s_batchColor;
 static int s_batchColorValid;
 static R_StateSnapshot s_batchState;
@@ -155,6 +156,20 @@ void R_SetVRBatching(int enabled)
     R_EndBatch();
     s_vrBatching=enabled!=0;
 }
+void R_SetVREarlyFlush(unsigned draws)
+{
+    R_EndBatch();
+    s_earlyFlushRemaining=draws;
+}
+/* Called once after a complete logical fan, never in the vertex loop. The
+ * countdown is armed only for a race eye, and zero after its one early flush. */
+static void R_EyeDrawSubmitted(void)
+{
+    if (--s_earlyFlushRemaining) return;
+    R_EndBatch();
+    glFlush();
+}
+
 #endif
 
 static GLenum GL_DepthComparison(R_DepthFunc f)
@@ -539,6 +554,7 @@ void R_DrawTriFan(const RenderVertex *v, int count)
             R_EmitVertex(v);R_EmitVertex(v+i);R_EmitVertex(v+i+1);
             s_batchVertices+=3;
         }
+        if (s_earlyFlushRemaining) R_EyeDrawSubmitted();
         return;
     }
 #endif
@@ -551,6 +567,7 @@ void R_DrawTriFan(const RenderVertex *v, int count)
     glEnd();
 #if SONICR_VR
     VR_TraceBatch((unsigned)count);
+    if (s_earlyFlushRemaining && VR_EyeActive()) R_EyeDrawSubmitted();
 #endif
 }
 

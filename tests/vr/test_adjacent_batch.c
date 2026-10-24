@@ -25,7 +25,7 @@ static unsigned boundRenderbuffer,renderbufferFormats[16],storageCalls;
 static GLState gpu;static Texture textures[256];static GLenum primitive,matrixMode;
 static float color[4],uv[2];static Output fan[128];static unsigned fanCount,triangleIndex;
 static Event events[32768],reference[32768];static unsigned eventCount,referenceCount,begins,logicalFans;
-static unsigned nextTexture=1,reads,swaps,releaseCount,beginSlots[3],colorCalls;
+static unsigned nextTexture=1,reads,swaps,releaseCount,beginSlots[3],colorCalls,flushCalls,finishCalls;
 static int raceProtocol,raceOwned[2],raceDone[2],raceCaptures;
 static unsigned pairFinishes,attachedTexture,captureMask,raceEyeFlush[2],raceRenders[3];
 static void outside(void){assert(!primitive);}
@@ -61,8 +61,8 @@ void glScissor(GLint x,GLint y,GLsizei w,GLsizei h){outside();int a[]={x,y,w,h};
 void glViewport(GLint x,GLint y,GLsizei w,GLsizei h){outside();int a[]={x,y,w,h};memcpy(gpu.viewport,a,sizeof a);}
 void glClearColor(GLfloat r,GLfloat g,GLfloat b,GLfloat a){outside();(void)r;(void)g;(void)b;(void)a;}
 void glClear(GLbitfield b){outside();record((int)b,NULL);}
-void glFlush(void){outside();if(raceProtocol && eye>=0)raceEyeFlush[eye]++;}
-void glFinish(void){outside();}
+void glFlush(void){outside();flushCalls++;if(raceProtocol && eye>=0)raceEyeFlush[eye]++;}
+void glFinish(void){outside();finishCalls++;}
 void glGenTextures(GLsizei n,GLuint *ids){outside();for(int i=0;i<n;i++)ids[i]=nextTexture++;assert(nextTexture<256);}
 void glGenFramebuffers(GLsizei n,GLuint *ids){outside();for(int i=0;i<n;i++)ids[i]=5+i;}
 void glGenRenderbuffers(GLsizei n,GLuint *ids){outside();for(int i=0;i<n;i++)ids[i]=8+i;}
@@ -105,7 +105,7 @@ int vr_xr_init(void){outside();return 1;}
 int vr_xr_runtime_fov(int enabled){return !enabled;}
 void vr_xr_deadline(unsigned seconds,int offhead,int neutral){(void)seconds;(void)offhead;(void)neutral;}
 int SDL_GL_SetSwapInterval(int interval){outside();(void)interval;return 0;}
-void vr_xr_end(int r){outside();if(raceProtocol){assert(raceRenders[0]==1 && raceRenders[1]==1 && raceRenders[2]==1);assert(r==1 && !raceOwned[0] && !raceOwned[1] && releaseCount==2);assert(reads==(raceCaptures?2u:0u));if(pairedComplete)assert(pairFinishes==1 && captureMask==(raceCaptures?3u:0u));}}
+void vr_xr_end(int r){outside();if(raceProtocol){assert(raceRenders[0]==1 && raceRenders[1]==1 && raceRenders[2]==1);assert(r==1 && !raceOwned[0] && !raceOwned[1] && releaseCount==2);assert(reads==(raceCaptures?2u:0u));assert(raceEyeFlush[0]==1u+(earlyFlushDraws?1u:0u) && raceEyeFlush[1]==1u+(earlyFlushDraws?1u:0u));if(pairedComplete)assert(pairFinishes==1 && captureMask==(raceCaptures?3u:0u));}}
 int vr_xr_begin(VREye e[2],int64_t *t){(void)e;*t+=11111111;return 1;}
 int vr_xr_focused(void){return 1;}
 int vr_xr_offhead(void){return 0;}
@@ -121,13 +121,13 @@ void RenderHUD(void){if(raceProtocol)raceRenders[eye<0?0:eye+1]++;BeginFrame();d
 void SetViewportClipRect(int *cam){assert(cam);}
 static void setup(int enabled,int mode){
  if(depthReversed)setDepthMode(0);
- R_EndBatch();memset(&gpu,0,sizeof gpu);gpu.clipDepth=GL_NEGATIVE_ONE_TO_ONE;gpu.clearDepth=1;
+ R_SetVREarlyFlush(0);earlyFlushDraws=0;memset(&gpu,0,sizeof gpu);gpu.clipDepth=GL_NEGATIVE_ONE_TO_ONE;gpu.clearDepth=1;
  perspectiveDepth=0;s_vrDepthReversed=0;clipControl=testClipControl;memset(textures,0,sizeof textures);memset(color,0,sizeof color);memset(uv,0,sizeof uv);
  memset(s_glTextureFilter,0,sizeof s_glTextureFilter);memset(s_tpageFilter,0,sizeof s_tpageFilter);memset(s_glTextureDirty,0,sizeof s_glTextureDirty);
  memset(g_tpageStateArray,0,52*sizeof *g_tpageStateArray);memset(s_tpageNoColorKey,0,sizeof s_tpageNoColorKey);memset(s_tpageGreen6,0,sizeof s_tpageGreen6);
  s_glTexturesInited=1;nextTexture=53;for(int i=0;i<52;i++){s_glTextures[i]=i+1;g_tpageWidth[i]=g_tpageHeight[i]=2;}
  static unsigned short pixels[4]={0x1234,0x3456,0x5678,0x789a};g_tpagePixelBuf[0]=pixels;g_tpagePixelBuf[1]=pixels;
- eventCount=begins=logicalFans=reads=swaps=releaseCount=colorCalls=0;memset(beginSlots,0,sizeof beginSlots);
+ eventCount=begins=logicalFans=reads=swaps=releaseCount=colorCalls=flushCalls=finishCalls=0;memset(beginSlots,0,sizeof beginSlots);
  perfEnabled=1;modeRace=1;memset(perfSubmits,0,sizeof perfSubmits);memset(perfVertices,0,sizeof perfVertices);
  traceStart();R_SetVRBatching(enabled);R_ResetState();g_screenWidth=640;g_screenHeight=480;g_screenHeightFull=480;
  g_screenCenterX=320;g_screenCenterY=240;g_projScaleXCurrent=g_projScaleY=320;g_farClipFloat=32768;
@@ -136,15 +136,16 @@ static void setup(int enabled,int mode){
  for(int e=0;e<2;e++){eyes[e]=(VREye){.pose={{0,0,0,1},{e?.032f:-.032f,0,0}},.fov={-.8f,.7f,.6f,-.65f},.width=8,.height=6};}
  if(eye>=0){cacheEyeProjection();}layer=0;roll=0;rollCos=1;rollSin=0;
 }
-static void raceProtocolTest(int paired,int captures,int reverse){
+static void raceProtocolTest(int paired,int captures,int reverse,int early){
  fflush(NULL);pid_t child=fork();assert(child>=0);
  if(!child){
-  setup(1,1);perspectiveDepth=reverse;raceProtocol=1;pairedComplete=paired;raceCaptures=captures;pairFinishes=captureMask=0;
+  setup(1,1);earlyFlushDraws=early;perspectiveDepth=reverse;raceProtocol=1;pairedComplete=paired;raceCaptures=captures;pairFinishes=captureMask=0;
   memset(raceOwned,0,sizeof raceOwned);memset(raceDone,0,sizeof raceDone);
   memset(raceEyeFlush,0,sizeof raceEyeFlush);memset(raceRenders,0,sizeof raceRenders);
   eye=-1;runtimeDump=captures;ticks=1;dumpTick=2;stereoCheck=0;haveCamera=1;
   g_viewportArray[0]=0;VR_RenderRace(1);outside();assert(!captures);
   assert(releaseCount==2 && !reads && pairFinishes==(unsigned)paired);
+  assert(raceEyeFlush[0]==1u+early && raceEyeFlush[1]==1u+early);
   assert(!depthReversed && !projectionPushed && gpu.clipDepth==GL_NEGATIVE_ONE_TO_ONE && gpu.clearDepth==1);VR_Shutdown();_exit(0);
  }
  int status;assert(waitpid(child,&status,0)==child);assert(WIFEXITED(status) && WEXITSTATUS(status)==0);
@@ -212,9 +213,49 @@ static void colorTest(void){
   printf("batch color production mode=%s legacy_calls=%u candidate_calls=%u exact_xyzw_color_uv_state=1 external_color_barriers=1\n",mode==0?"native":mode==1?"eye":"identity",oldColors,colorCalls);
  }
 }
+static void earlyFlushScenario(unsigned threshold,int batch){
+ setup(batch,1);earlyFlushDraws=threshold;
+ /* Canonical native, identity and menu targets remain disarmed. */
+ eye=-1;BeginFrame();draw(4);EndFrame();assert(flushCalls==1);
+ for(int mode=0;mode<2;mode++){
+  modeRace=mode;identity=mode;target(0);BeginFrame();
+  unsigned before=flushCalls;for(int i=0;i<10;i++)draw(4);
+  R_EndBatch();assert(flushCalls==before && !s_earlyFlushRemaining);EndFrame();release();
+ }
+ identity=0;modeRace=1;
+ const int order[]={0,1,1,0};
+ for(unsigned pass=0;pass<4;pass++){
+  target(order[pass]);BeginFrame();unsigned before=flushCalls;
+  for(int i=0;i<10;i++){
+   if(i==2)R_SetBlendMode(R_BLEND_ADDITIVE);
+   if(i==5){VR_Layer(1);R_ResetState();}
+   draw(3+i%3);
+   assert(flushCalls==before+((threshold && (unsigned)i+1>=threshold)?1u:0u));
+  }
+  EndFrame();assert(flushCalls==before+1+((threshold && threshold<=10)?1u:0u));
+  if(pass&1)unbindEye();else release();
+  assert(!s_earlyFlushRemaining);
+ }
+ /* An abandoned eye cannot leave a countdown armed for later native draws. */
+ target(0);BeginFrame();draw(4);VR_Shutdown();assert(!s_earlyFlushRemaining);
+ assert(!reads && !finishCalls);outside();traceDraw=0;
+}
+static void earlyFlushTest(void){
+ for(int batch=0;batch<2;batch++){
+  earlyFlushScenario(0,batch);referenceCount=eventCount;
+  memcpy(reference,events,eventCount*sizeof *events);unsigned baseFlushes=flushCalls;
+  const unsigned thresholds[]={1,3,12};
+  for(unsigned i=0;i<3;i++){
+   unsigned threshold=thresholds[i];earlyFlushScenario(threshold,batch);
+   assert(eventCount==referenceCount && !memcmp(reference,events,eventCount*sizeof *events));
+   assert(flushCalls==baseFlushes+(threshold<=10?4:0)+(threshold==1?1:0));
+  }
+ }
+ puts("early flush production: once per race eye, batch on/off, thresholds1/3/12, no native/identity/menu flush, repeated/reversed eyes, state/layer boundaries, release/abandon reset; exact vertices/state and no finish/readback");
+}
 int main(int argc,char **argv){
  assert(argc==2);dumpDir=argv[1];
- colorTest();
+ colorTest();earlyFlushTest();
  for(int mode=0;mode<3;mode++){
   legacyRenderer=1;scenario(0,mode);referenceCount=eventCount;memcpy(reference,events,eventCount*sizeof *events);
   unsigned oldBegins=begins,oldFans=logicalFans;uint64_t oldHash=drawHash;unsigned oldCount=drawCount;
@@ -238,9 +279,13 @@ int main(int argc,char **argv){
  puts("batch production menu transition: pending eye geometry closed before copy and direct quad draws");
  /* Test the actual environment route, not only its backend setter. */
  setenv("SONICR_VR_DIAGNOSTIC","1",1);unsetenv("SONICR_VR_OFFHEAD_RENDER");unsetenv("SONICR_VR_OFFHEAD_NEUTRAL");
- unsetenv("SONICR_VR_PAIRED_COMPLETE");unsetenv("SONICR_VR_DEPTH");unsetenv("SONICR_VR_OFFHEAD_RUNTIME_FOV");
+ unsetenv("SONICR_VR_EARLY_FLUSH_DRAWS");unsetenv("SONICR_VR_PAIRED_COMPLETE");unsetenv("SONICR_VR_DEPTH");unsetenv("SONICR_VR_OFFHEAD_RUNTIME_FOV");
  setenv("SONICR_VR_BATCH","0",1);assert(VR_Init());assert(!batching && !s_vrBatching && pairedComplete && perspectiveDepth);VR_Shutdown();
- unsetenv("SONICR_VR_BATCH");assert(VR_Init());assert(batching && s_vrBatching && perspectiveDepth);VR_Shutdown();
+ unsetenv("SONICR_VR_BATCH");assert(VR_Init());assert(batching && s_vrBatching && perspectiveDepth && earlyFlushDraws==2048 && !s_earlyFlushRemaining);VR_Shutdown();
+ setenv("SONICR_VR_EARLY_FLUSH_DRAWS","0",1);assert(VR_Init());assert(!earlyFlushDraws && !s_earlyFlushRemaining);VR_Shutdown();
+ setenv("SONICR_VR_EARLY_FLUSH_DRAWS","3",1);assert(VR_Init());assert(earlyFlushDraws==3 && !s_earlyFlushRemaining);VR_Shutdown();
+ unsetenv("SONICR_VR_EARLY_FLUSH_DRAWS");
+ puts("early flush startup: unset defaults2048; explicit0 disables; explicit3 selects threshold; startup never arms an eye");
  puts("batch production environment: explicit 0 disables batching; unset batching and depth default on");
  setenv("SONICR_VR_PAIRED_COMPLETE","1",1);assert(VR_Init());assert(pairedComplete);VR_Shutdown();
  setenv("SONICR_VR_PAIRED_COMPLETE","0",1);assert(VR_Init());assert(!pairedComplete);VR_Shutdown();
@@ -251,7 +296,7 @@ int main(int argc,char **argv){
  int status;assert(waitpid(bad,&status,0)==bad);assert(WIFEXITED(status) && WEXITSTATUS(status)!=0);
  puts("runtime FOV production startup: invalid diagnostic/neutral flag combination rejected");
  dumpDir=argv[1];
- for(int paired=0;paired<2;paired++)for(int captures=0;captures<2;captures++)for(int reverse=0;reverse<2;reverse++)raceProtocolTest(paired,captures,reverse);
+ for(int paired=0;paired<2;paired++)for(int captures=0;captures<2;captures++)for(int reverse=0;reverse<2;reverse++)for(int early=0;early<2;early++)raceProtocolTest(paired,captures,reverse,early);
  puts("race completion: actual render loop default/opt-out, no normal readbacks, paired captures after shared finish before either release passed");
  return 0;
 }
