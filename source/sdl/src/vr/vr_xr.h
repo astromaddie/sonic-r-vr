@@ -3,7 +3,7 @@
 #include "vr_math.h"
 typedef struct { VRPose pose; VRFov fov; unsigned texture; int width,height; } VREye;
 int vr_xr_init(void);
-void vr_xr_deadline(unsigned seconds,int offhead);
+void vr_xr_deadline(unsigned seconds,int offhead,int neutral);
 int vr_xr_offhead(void);
 int vr_xr_focused(void);
 void vr_xr_shutdown(void);

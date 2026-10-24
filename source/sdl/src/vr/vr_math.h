@@ -59,6 +59,17 @@ static inline void vr_project(VRVec p,VRFov f,float *x,float *y) {
     *x=2*p.x/(-p.z*(r-l))-(r+l)/(r-l);
     *y=2*p.y/(-p.z*(u-d))-(u+d)/(u-d);
 }
+/* Same projection arithmetic, with the eye's invariant trig evaluated once.
+ * Keep vr_project above as the independent uncached reference. */
+typedef struct { float left,right,up,down; } VRProjection;
+static inline VRProjection vr_projection(VRFov f) {
+    return (VRProjection){tanf(f.left),tanf(f.right),tanf(f.up),tanf(f.down)};
+}
+static inline void vr_project_cached(VRVec p,VRProjection f,float *x,float *y) {
+    float l=f.left,r=f.right,u=f.up,d=f.down;
+    *x=2*p.x/(-p.z*(r-l))-(r+l)/(r-l);
+    *y=2*p.y/(-p.z*(u-d))-(u+d)/(u-d);
+}
 /* One tick maximum per display frame. After a stall, re-anchor rather than
  * accelerating gameplay. Tick N is presented between N-1 and N (one tick lag). */
 static inline int vr_clock_step(VRClock *c,int64_t display,int visible) {

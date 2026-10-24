@@ -2,7 +2,8 @@
  * r_draw.h — Geometry submission API for the immediate-mode renderer.
  *
  * All functions emit geometry immediately using the current render state.
- * No batching — the backend draws to the GPU right away.
+ * The VR GL backend may group adjacent compatible eye triangles; vertex
+ * transforms still happen immediately, with explicit GL boundary barriers.
  */
 #ifndef R_DRAW_H
 #define R_DRAW_H

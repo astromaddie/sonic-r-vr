@@ -78,6 +78,15 @@ void R_ResetState(void);
 /* Flush pending state — apply only GL calls for state that changed. */
 void R_FlushState(void);
 
+/* End adjacent eye triangles before any raw GL/state/resource boundary.
+ * This only calls glEnd: it does not flush or wait for GPU completion. */
+#if SONICR_VR
+void R_EndBatch(void);
+void R_SetVRBatching(int enabled);
+#else
+static inline void R_EndBatch(void) {}
+#endif
+
 /* DEBUG: read back the pending state a draw is about to use. Diagnostic only —
  * for confirming what state an unscoped draw call inherits. */
 void R_DebugGetState(int *depthTest, int *depthWrite, int *depthFunc,

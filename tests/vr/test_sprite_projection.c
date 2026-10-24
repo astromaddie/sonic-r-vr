@@ -20,7 +20,6 @@ int g_itemEffectAnimPhase;
 float g_uvLUT256[256];
 static int active=1, count;
 static RenderVertex draws[2048][4];
-void VR_WaterSurface(void) {}
 int VR_EyeActive(void) { return active; }
 void R_SetTexEnv(R_TexEnvMode m) {(void)m;}
 void R_SetTexture(int t) {(void)t;}

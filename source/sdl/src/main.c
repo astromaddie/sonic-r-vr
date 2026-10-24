@@ -786,6 +786,7 @@ title_sequence:
         g_raceType = RACE_TIMEATTACK; g_raceSubMode = SUBMODE_NORMAL;
         g_trackId = TRACK_RESORT_ISLAND; g_numPlayers = 1; g_numHumans = 1; g_numViewports = 1;
         g_weatherConfig = WC_CLEAR; g_timeOfDay = -1;
+        VR_ConfigureAutoRace();
         g_playerBase[0].charId = CHAR_SONIC;
         goto race_setup;
     }

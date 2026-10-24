@@ -22,7 +22,6 @@ static int active=1,repeat=1,count;
 static RenderVertex draws[4096][5];static int sizes[4096];
 typedef struct {int tex,env,blend,depth,filter;} State;
 static State state,stack[4],states[4096];static int stackCount;
-void VR_WaterSurface(void) {}
 int VR_EyeActive(void){return active;}
 int VR_Repeat(void){return repeat;}
 int QueryTerrainHeight(int x,int z,int y){(void)x;(void)z;(void)y;return 0;}

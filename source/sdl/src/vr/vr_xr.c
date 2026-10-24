@@ -24,13 +24,13 @@ static int width[2],height[2],running,begun,quit,acquired[2],waited[2];
 static XrFrameState frame;
 static int focused;
 static uint32_t runStart,runLimit,lastProgress;
-static unsigned frameWaits,standbyFrames,invalidFrames,validFrames,submittedFrames,renderedEyes,fallbackFrames;
-static int offheadRender,lastPoseKind=-1;
+static unsigned frameWaits,standbyFrames,invalidFrames,validFrames,submittedFrames,renderedEyes,fallbackFrames,forcedFrames;
+static int offheadRender,forceNeutral,lastPoseKind=-1;
 int vr_xr_offhead(void) { return offheadRender; }
-void vr_xr_deadline(unsigned seconds,int offhead) { runStart=lastProgress=SDL_GetTicks();runLimit=seconds*1000;offheadRender=offhead; }
+void vr_xr_deadline(unsigned seconds,int offhead,int neutral) { runStart=lastProgress=SDL_GetTicks();runLimit=seconds*1000;offheadRender=offhead;forceNeutral=neutral && offhead && seconds; }
 static void progress(const char *reason) {
-    fprintf(stderr,"[vr-runtime] %s elapsed_ms=%u running=%d focused=%d waits=%u standby=%u invalid_pose=%u valid_pose=%u synthetic_pose=%u rendered_eyes=%u submitted_layers=%u offhead=%d\n",
-        reason,SDL_GetTicks()-runStart,running,focused,frameWaits,standbyFrames,invalidFrames,validFrames,fallbackFrames,renderedEyes,submittedFrames,offheadRender);
+    fprintf(stderr,"[vr-runtime] %s elapsed_ms=%u running=%d focused=%d waits=%u standby=%u invalid_pose=%u valid_pose=%u synthetic_pose=%u forced_neutral_pose=%u rendered_eyes=%u submitted_layers=%u offhead=%d\n",
+        reason,SDL_GetTicks()-runStart,running,focused,frameWaits,standbyFrames,invalidFrames,validFrames,fallbackFrames,forcedFrames,renderedEyes,submittedFrames,offheadRender);
 }
 int vr_xr_focused(void) { return focused; }
 static XrView views[2];
@@ -159,10 +159,11 @@ int vr_xr_begin(VREye eyes[2],int64_t *time) {
         if(!check(xrLocateViews(session,&li,&vs,2,&n,views),"xrLocateViews"))return -1;
         XrViewStateFlags valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
         int poseValid=n==2 && (vs.viewStateFlags&valid)==valid;
-        if(!poseValid){invalidFrames++;if(!offheadRender)return 0;fallbackFrames++;}
+        if(forceNeutral){poseValid=0;forcedFrames++;}
+        else if(!poseValid){invalidFrames++;if(!offheadRender)return 0;fallbackFrames++;}
         else validFrames++;
         if(offheadRender && (lastPoseKind!=poseValid || frameWaits==1)) {
-            fprintf(stderr,"[vr-runtime] offhead shouldRender=%d pose=%s layers=0\n",frame.shouldRender,poseValid?"located":"synthetic-neutral-64mm-fov90x74");
+            fprintf(stderr,"[vr-runtime] offhead shouldRender=%d pose=%s layers=0\n",frame.shouldRender,forceNeutral?"forced-neutral-64mm-fov90x74":poseValid?"located":"synthetic-neutral-64mm-fov90x74");
             lastPoseKind=poseValid;
         }
         for(int e=0;e<2;e++) {

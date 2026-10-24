@@ -10,7 +10,10 @@ void VR_Shutdown(void);
 int VR_Diagnostic(void);
 unsigned short VR_PadBits(void);
 int VR_AutoRace(void);
+void VR_ConfigureAutoRace(void);
+void VR_PerfWeather(int start);
 void VR_DiagnosticInput(void);
+void VR_TraceBatch(unsigned vertices);
 void VR_TraceDraw(const RenderVertex *v,int count,const void *state,size_t size);
 void VR_RaceStart(void);
 int VR_RaceFrame(void); /* -1 exit, 0 render-only, 1 native tick */
@@ -24,6 +27,5 @@ void VR_Layer(int layer); /* 0 world, 1 HUD, 2 sky, 3 full-eye fade */
 void VR_EmitVertex(const RenderVertex *v);
 void VR_SkyBegin(void);
 void VR_SkyEnd(void);
-void VR_WaterSurface(void);
 #endif
 #endif

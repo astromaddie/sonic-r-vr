@@ -106,6 +106,7 @@ static unsigned char *s_tpageRGBA8Buf[52];
  */
 void GL_InitTextures(void)
 {
+    R_EndBatch();
     if (s_glTexturesInited) {
         return;
     }
@@ -127,6 +128,7 @@ void GL_InitTextures(void)
  */
 void GL_UploadTpage(int tpage)
 {
+    R_EndBatch();
     if (!s_glTexturesInited) {
         GL_InitTextures();
     }
@@ -269,6 +271,7 @@ void GL_UploadTpage(int tpage)
  */
 void GL_UploadTpageRGBA(int tpage, unsigned char *rgba, int w, int h)
 {
+    R_EndBatch();
     if (!s_glTexturesInited) {
         GL_InitTextures();
     }
@@ -341,6 +344,7 @@ void GL_ClearTpageDirty(int tpage)
  */
 void GL_UploadTpageSubRect(int tpage, int destX, int destY, int width, int height)
 {
+    R_EndBatch();
     if (!s_glTexturesInited) {
         GL_InitTextures();
     }
@@ -418,6 +422,7 @@ void GL_SetPendingRGBA(int tpage, unsigned char *rgba, int w, int h)
  */
 void BeginFrame(void)
 {
+    R_EndBatch();
     /* Clear vertex buffer depth fields (offset 0x30 per vertex, stride 0x40)
      * to prevent stale geometry from previous frames showing as glitchy
      * triangles. Only zeroes the depth int, not the source positions. */
@@ -530,6 +535,7 @@ void BeginFrame(void)
  */
 void EndFrame(void)
 {
+    R_EndBatch();
 #ifdef SONICR_GLES2
     R_GLES2_FlushVerts();
 #endif
@@ -544,6 +550,7 @@ void EndFrame(void)
  */
 void FlipD3D(void)
 {
+    R_EndBatch();
 #if SONICR_VR
     if (VR_Present()) return;
 #endif
@@ -565,6 +572,7 @@ void FlipD3D(void)
  */
 void SetViewportFromConfig(int *config)
 {
+    R_EndBatch();
     if (config == NULL) {
         return;
     }

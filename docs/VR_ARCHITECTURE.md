@@ -171,7 +171,7 @@ ground particle renderer may clear a culled slot only on the canonical pass; an 
 
 Water is the upstream port's animated, tinted panorama reflection plus bottom
 fill, with ambient `GENERAL/PLOP2.RAW` ring decals loaded by `LoadPlopSprites`.
-The native path has no separate continuous water-surface texture. The SDL reflection pass
+It has no separate continuous water-surface texture. The SDL reflection pass
 now explicitly scopes opaque/modulate/depth-write-off state, followed by its
 existing additive tint, and restores the caller's state just as the DC path
 does. This does not introduce a new water material. Baseline native and eye
@@ -190,31 +190,6 @@ regressions. These CPU checks establish geometry/state behavior, not wearer
 comfort or complete GPU coverage. Use the real-data temporal stereo diagnostic
 and its uninstrumented endpoint control before headset acceptance. Its state
 fingerprint now includes ground particle slots/visibility.
-
-### Continuous VR water surface
-
-At the user's request, actual eye passes add a translucent, animated ripple
-texture over the native reflection/tint. `vr_water.c` projects a Y=0 world
-plane through each eye's full camera basis and asymmetric FOV. World-XZ UVs
-keep the waves attached to the water during head movement; `g_totalFrames`
-supplies the same canonical animation phase to both eyes. Snow freezes it.
-A small context-owned procedural texture has a complete filtered mip chain;
-contrast fades toward the horizon. It is created once at VR initialization
-and deleted at shutdown, without texture-atlas slots or per-frame uploads.
-
-The surface draws before the playfield/track, so native land tiles and their
-water holes supply the existing mask. It never writes depth. The native GL
-state cache is flushed before scoped raw GL drawing, and actual state is
-restored afterward. Canonical/identity passes and VR0 retain their original
-appearance. No readbacks or synchronization calls are added.
-
-`tests/vr/run-water-surface.sh` records the production GL material: texture
-lifetime/mips, 31 animation ticks with repeated eye order, perspective UV
-agreement at a shared world point, camera translation/rotation and near-plane
-clipping, frozen/wrapped animation, and restored incoming GL state. Actual
-stationary Resort Island tick90 captures show water for visual review; compare
-the native/identity controls and both eyes, plus temporal ticks87–90. CPU
-checks do not establish the final material's visual quality or worn comfort.
 
 ### Stereo sprite regression
 
@@ -256,6 +231,107 @@ on observer, state or image mismatch. Readbacks and extra rendering occur only
 in this synthetic diagnostic. For matched legacy image evidence, retain this
 observer while substituting the legacy sprite/sky renderers and legacy sky
 emission block; ordinary symmetric baseline dumps do not exercise this defect.
+
+### Weather projection and performance fixture
+
+The added procedural water surface has been removed at the user's request.
+Native reflected/tinted water and frozen snow-weather water remain; no collision
+or drowning rule changed. Sky and ground-decal precision fixes are retained.
+Snow/rain and ambient particle quads now use fractional eye corners, preserving
+native integer corners when VR is disabled or rendering the canonical pass.
+`tests/vr/run-weather-projection.sh` compiles the actual weather initialization
+and emitters: 81 camera/atlas samples, two eyes and reversed same-eye repeats,
+canonical visibility ownership, rain initialization and render-state restoration.
+`SONICR_TEST_LEGACY_REF=f2491a8` runs the same fixture against the old emitter;
+`--flat` and `SONICR_TEST_VR=0` are native draw-stream controls.
+
+For an actual normal-race fixture, set `SONICR_VR_AUTORACE=1` (runtime) or
+`SONICR_VR_DIAGNOSTIC=1` (host), then explicitly set:
+
+- `SONICR_VR_FIXTURE_TRACK=1..5` (default 1).
+- `SONICR_VR_FIXTURE_WEATHER=0..2` (clear/rain/snow, default clear).
+- `SONICR_VR_FIXTURE_TIME=0..3` (sunrise/day/sunset/night, default sunrise).
+
+Any fixture setting selects five-player Grand Prix, fixed character IDs and a
+fixed random seed **before** native track/weather selection, texture loading and
+particle initialization. Normal menu-selected races are unaffected. Radiant
+Emerald still forces native clear weather. The ready log records resolved
+weather/time and precipitation range/size/texture; visible precipitation draws
+must also be verified. The original unset-fixture one-player clear time attack
+remains available for comparisons to prior captures.
+
+`SONICR_VR_PERF=1` records roughly one-second CPU wall-time windows in normal or
+autorace play. Stage `*_ms` values are totals divided by display-frame count:
+XR begin/pacing, simulation/input, canonical render, both eye acquisitions,
+both eye command submissions, existing eye release/completion, XR end, and
+desktop mirror swap. `draws` and `weather_draws` are raw window counts in
+canonical,left,right order; weather time is nested within render time.
+`max_interval_ms` is the largest interval between returned race frames.
+These are CPU spans, **not GPU timings** or frame-time percentiles. The disabled
+path does not read clocks or count draws; the test in `run-perf-fixture.sh`
+exercises the actual recorder with a controlled clock. Performance runs must
+omit captures and the stereo observer; use compositor telemetry independently.
+
+For a reproducible device workload independent of its resting pose, explicitly
+add `SONICR_VR_OFFHEAD_NEUTRAL=1`. This requires the existing bounded runtime
+`AUTORACE=1`, `OFFHEAD_RENDER=1`, `RUN_SECONDS=1..300` combination. XR wait/begin
+pacing and real swapchain dimensions remain; both views use neutral 64 mm IPD
+and 90 by 74 degree FOV. `forced_neutral_pose` counts these frames separately
+from valid located views and invalid-pose fallback. All such frames submit zero
+layers, including if focus changes. This is off-head GPU/CPU workload evidence,
+not worn tracking or display-performance acceptance. No release synchronization
+or native 30 Hz simulation/input scheduling was changed.
+
+Eye projection now caches FOV tangents and HUD pose terms at every eye target;
+sky roll sine/cosine refresh with each applied game camera. The per-vertex
+arithmetic order, homogeneous depth/W and native/identity bypass are unchanged.
+`tests/vr/run-projection-cache.sh` compares the actual emitter and backend dispatch
+against the uncached production function extracted from `f2491a8` (identical to
+the frozen instrumented baseline). It exercises asymmetric/canted views, head
+poses, camera/mirror changes, four layers, eye-order repeats and menu/identity/
+native routes with bitwise XYZW comparison. This is CPU equivalence evidence;
+matched device pixels and timing determine whether the optimization is retained.
+
+Adjacent eye primitives are grouped into `GL_TRIANGLES` runs, expanding each
+original fan in `(0,i,i+1)` order through the same immediate vertex emitter.
+Runs stop at changes to desired render state, texture/filter or dirty texture,
+and at explicit state/resource/camera/layer/frame/readback boundaries. There is
+no geometry sorting, deferred vertex storage or new GPU wait. Native/canonical
+and identity rendering retain per-fan submission. The existing per-eye
+`glFlush`/`glFinish` completion contract is unchanged.
+
+`SONICR_VR_BATCH=0` selects the original per-fan eye path in the same binary;
+unset defaults to batching. Startup logs the setting. With `PERF=1`,
+`gl_submits` and `gl_vertices` report backend GL primitive submissions and emitted
+vertices, separately from original `draws`; all are raw window counts in
+canonical,left,right order. These are API submissions, not measured GPU draw
+calls; drivers can split them. Triangle expansion may increase vertex emissions.
+`tests/vr/run-adjacent-batch.sh` compares extracted legacy submission, opt-out and
+batching using a strict GL recorder: exact ordered triangle vertices/effective
+state/resource events, no illegal GL calls inside Begin, unchanged native and
+identity routes, and actual lifecycle/texture/clear/readback/menu boundaries.
+Source-only snapshots can set `SONICR_TEST_LEGACY_BACKEND` to the absolute frozen
+baseline `r_gl_backend.c`; the extracted legacy function hash is verified.
+Matched real-game pixels and capture-free total frame timing remain required
+for acceptance; CPU fixture batch-count reduction alone is insufficient.
+
+On Frame's Zink/Turnip driver, a matched native GCC 15.1.1 executable with
+batching disabled/enabled rendered the five-player Resort Island snow fixture
+at 44.66/94.87 application FPS. Both used actual 2160-square XR swapchains,
+neutral off-head views, zero submitted layers and the unchanged 30 Hz game
+tick. Runs lasted 25 seconds; the first two telemetry windows were excluded.
+Eye API submissions fell from about 3,800 to 217 per eye/frame, while the CPU
+wall span around existing release/completion fell from 17.12 to 6.05 ms.
+Clear and rain controls with batching reached 99.69 and 91.30 application FPS.
+All 26 matched GPU diagnostic captures were byte-identical to the unbatched
+path, including asymmetric and repeated/reversed eyes. These measurements
+establish an off-head workload improvement, not sustained worn 120 Hz or
+acceptance of every moving race scene.
+
+This Frame-specific validation build uses a private static OpenXR 1.1.63 loader
+and requires GLIBC 2.38 / GLIBCXX 3.4.32. Its package records the game's native
+toolchain separately from reused probe/runtime components built in the pinned
+image; it does not claim the pinned image produced the native game executable.
 
 ## Controller input
 

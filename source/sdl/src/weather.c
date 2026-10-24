@@ -1,4 +1,5 @@
 #include "vr/vr.h"
+#include "vr/vr_projection.h"
 /**
  * weather.c — Per-track weather particle functions
  *
@@ -659,10 +660,10 @@ void DrawOtherParticles(void)
         int heightOff = p->height;
 
         /* Project to screen quad corners */
-        int x0 = g_screenCenterX + ((camX - halfSize) * g_projScaleXCurrent) / camZ;
-        int y0 = g_screenCenterY - ((camY + heightOff) * g_projScaleY) / camZ;
-        int x1 = g_screenCenterX + ((camX + halfSize) * g_projScaleXCurrent) / camZ;
-        int y1 = g_screenCenterY - ((camY - heightOff) * g_projScaleY) / camZ;
+        float x0 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX - halfSize, camZ);
+        float y0 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY + heightOff, camZ);
+        float x1 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX + halfSize, camZ);
+        float y1 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY - heightOff, camZ);
 
         /* Clip test */
         if (x0 > g_clipRight || x1 < g_clipLeft ||
@@ -766,6 +767,9 @@ void DrawSnowParticles(int viewportIdx)
     }
 
     /* Additive blend + depth write off for snow/rain particles */
+#if SONICR_VR
+    VR_PerfWeather(1);
+#endif
     R_PushState();
     R_SetBlendMode(R_BLEND_ADDITIVE);
     R_SetDepthWrite(0);
@@ -822,10 +826,10 @@ void DrawSnowParticles(int viewportIdx)
         int halfH = p->sizeH;
 
         /* Project to screen quad corners */
-        int x0 = g_screenCenterX + ((camX - halfW) * g_projScaleXCurrent) / camZ;
-        int y0 = g_screenCenterY - ((camY + halfH) * g_projScaleY) / camZ;
-        int x1 = g_screenCenterX + ((camX + halfW) * g_projScaleXCurrent) / camZ;
-        int y1 = g_screenCenterY - ((camY - halfH) * g_projScaleY) / camZ;
+        float x0 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX - halfW, camZ);
+        float y0 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY + halfH, camZ);
+        float x1 = vr_billboard_coord(g_screenCenterX, g_projScaleXCurrent, camX + halfW, camZ);
+        float y1 = vr_billboard_coord(g_screenCenterY, -g_projScaleY, camY - halfH, camZ);
 
         /* Mark as visible */
 #if SONICR_VR
@@ -890,6 +894,9 @@ void DrawSnowParticles(int viewportIdx)
     }
 
     R_PopState();
+#if SONICR_VR
+    VR_PerfWeather(0);
+#endif
 }
 
 /**

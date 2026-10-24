@@ -135,12 +135,33 @@ static void GL_ApplyTpageFilter(int tp)
     }
 }
 
+#if SONICR_VR
+static int s_vrBatching=1,s_batchOpen;
+static unsigned s_batchVertices;
+static R_StateSnapshot s_batchState;
+static unsigned char s_batchFilter;
+void R_EndBatch(void)
+{
+    if (!s_batchOpen) return;
+    glEnd();
+    s_batchOpen=0;
+    VR_TraceBatch(s_batchVertices);
+    s_batchVertices=0;
+}
+void R_SetVRBatching(int enabled)
+{
+    R_EndBatch();
+    s_vrBatching=enabled!=0;
+}
+#endif
+
 /* =====================================================================
  * R_FlushState — apply only the GL calls for state that changed
  * ===================================================================== */
 
 void R_FlushState(void)
 {
+    R_EndBatch();
     /* Texture binding — skip if tpage unchanged.
      * Dirty-texture uploads still happen even on a cache hit (the tpage
      * data changed, not the binding). */
@@ -351,6 +372,7 @@ void R_SetFilter(R_FilterMode mode)
 void R_SetTpageFilter(int tpage, R_FilterMode mode)
 {
     if (tpage >= 0 && tpage < 52) {
+        R_EndBatch();
         s_tpageFilter[tpage] = (unsigned char)(mode + 1);
     }
 }
@@ -358,6 +380,7 @@ void R_SetTpageFilter(int tpage, R_FilterMode mode)
 void R_ClearTpageFilter(int tpage)
 {
     if (tpage >= 0 && tpage < 52) {
+        R_EndBatch();
         s_tpageFilter[tpage] = 0;
     }
 }
@@ -426,6 +449,7 @@ void R_DebugGetState(int *depthTest, int *depthWrite, int *depthFunc,
 
 void R_ResetState(void)
 {
+    R_EndBatch();
     s_desired = s_defaults;
     /* Force full re-sync on next R_FlushState by invalidating current.
      * Can't use plain memset(0xFF) because 0xFFFFFFFF == -1, which matches
@@ -471,6 +495,29 @@ void R_DrawTriFan(const RenderVertex *v, int count)
 
 #if SONICR_VR
     VR_TraceDraw(v,count,&s_desired,sizeof(s_desired));
+    if (s_vrBatching && VR_EyeActive()) {
+        int tp=s_desired.textureId;
+        int textured=tp>=0 && tp<52;
+        unsigned char filter=textured ? s_tpageFilter[tp] : 0;
+        if (textured && !filter) filter=(unsigned char)(s_desired.filter+1);
+        /* Keep only adjacent compatible primitives together. Snapshot desired
+         * state, not s_current: the latter intentionally ignores cull requests.
+         * A dirty tpage must upload before vertices using its new contents. */
+        if (!s_batchOpen || memcmp(&s_batchState,&s_desired,sizeof(s_desired)) ||
+            filter!=s_batchFilter || (textured && s_glTextureDirty[tp])) {
+            R_FlushState();
+            glBegin(GL_TRIANGLES);
+            s_batchOpen=1;s_batchVertices=0;
+            s_batchState=s_desired;s_batchFilter=filter;
+        }
+        /* Exactly the original fan's triangle/vertex order, including its
+         * provoking vertex. Transform immediately with the current eye/layer. */
+        for (int i=1;i<count-1;i++) {
+            R_EmitVertex(v);R_EmitVertex(v+i);R_EmitVertex(v+i+1);
+            s_batchVertices+=3;
+        }
+        return;
+    }
 #endif
     R_FlushState();
 
@@ -479,6 +526,9 @@ void R_DrawTriFan(const RenderVertex *v, int count)
         R_EmitVertex(&v[i]);
     }
     glEnd();
+#if SONICR_VR
+    VR_TraceBatch((unsigned)count);
+#endif
 }
 
 void R_DrawTri(const RenderVertex v[3])
