@@ -4,6 +4,9 @@
 #define VR_REAL_CAMERA 1
 #include "test_world_depth.c"
 #include "vr/vr_projection.h"
+extern int g_footShadowVerts[];
+int g_qtEdgeIdx,g_qtSurfIdx;
+int QueryTerrainHeight(int x,int z,int y){(void)x;(void)z;(void)y;return 0;}
 #include "legacy_pose.h"
 void Legacy_RenderTrackD3D(void);
 void RenderHiddenSubEntry(int x,int z,int y){(void)x;(void)y;(void)z;assert(0);}
@@ -280,4 +283,78 @@ static void fixtureTest(const char *directory){
  }
  puts("pose fixture: actual native input/pause transition; tick-locked combined canted poses; default/legacy controls; unsafe gates rejected; CPU-only stream dump passed");
 }
-int main(int argc,char **argv){assert(argc==2);fullTrackTest();nativeTrackTest();trackEdgesTest();pauseTest();statusTest();skyTest();skyAtlasTest();fixtureTest(argv[1]);return 0;}
+/* The same full track transform and the three actual overlay producers must
+ * agree at covered pixel centers, not just at projected quad vertices. */
+static void decalDraw(int producer,int legacy,int z){
+ int v[12]={-32,0,z+32,32,0,z+32,32,0,z-32,-32,0,z-32};
+ if(producer==0){if(legacy)Legacy_SubmitGroundShadow((intptr_t)v);else SubmitGroundShadow((intptr_t)v);}
+ if(producer==1){
+  memset(g_footShadowCtrl,0,80*4*sizeof(int));g_footShadowCtrl[3]=1;
+  for(int i=0;i<4;i++)for(int j=0;j<3;j++)g_footShadowVerts[i*16+5+j]=v[i*3+j];
+  if(legacy)Legacy_DrawFootShadows();else DrawFootShadows();
+ }
+ if(producer==2){if(legacy)Legacy_DrawMovingPickupShadow(0,0,z*4096,32);else DrawMovingPickupShadow(0,0,z*4096,32);}
+ R_EndBatch();
+}
+static int strictlyCovered(unsigned first,unsigned end,float x,float y){
+ for(unsigned i=first;i+2<end;i+=3){
+  double xx[3],yy[3];for(int j=0;j<3;j++){const Output *v=&events[i+j].vertex;xx[j]=(double)v->xyzw[0]/v->xyzw[3];yy[j]=(double)v->xyzw[1]/v->xyzw[3];}
+  double a=(xx[1]-xx[0])*(y-yy[0])-(yy[1]-yy[0])*(x-xx[0]);
+  double b=(xx[2]-xx[1])*(y-yy[1])-(yy[2]-yy[1])*(x-xx[1]);
+  double c=(xx[0]-xx[2])*(y-yy[2])-(yy[0]-yy[2])*(x-xx[2]);
+  if((a>0 && b>0 && c>0)||(a<0 && b<0 && c<0))return 1;
+ }
+ return 0;
+}
+static void decalTrackTest(void){
+ unsigned samples[2][3]={{0}},fails[2][3]={{0}},culled[2][3]={{0}},nearSamples=0,controls=0,repeats=0;
+ for(int i=0;i<4096;i++){g_sinTable[i]=(int)(16384*sin(i*6.283185307179586/4096));g_cosTable[i]=(int)(16384*cos(i*6.283185307179586/4096));}
+ for(int near=0;near<2;near++)for(int scale=1;scale<=11;scale+=5)
+ for(int frame=0;frame<21;frame++)for(int e=0;e<2;e++)for(int zi=0;zi<(near?3:21);zi++)for(int legacy=0;legacy<2;legacy++){
+  depthScale=scale;poseCamera(frame,e);initObject(0);trackFloat=1;
+  if(near){
+   /* Actual full road crosses the camera plane; overlays stay in front. */
+   RenderCamera cam={0};cam.camFloatY=20;cam.yawFloat=.12f;
+   memcpy(current,&cam,sizeof cam);memcpy(previous,&cam,sizeof cam);int *vp=current;VR_ApplyCamera(&vp);SetViewportClipRect(vp);
+   trackVertices[2].posZ=trackVertices[3].posZ=-32;
+  }
+  RenderTrackD3D();R_EndBatch();unsigned roadEnd=eventCount;assert(roadEnd>0);
+  int z=near?100+zi*60:(1400+zi*200)*scale;
+  for(int producer=0;producer<3;producer++){
+   eventCount=roadEnd;decalDraw(producer,legacy,z);unsigned end=eventCount;
+   if(end==roadEnd){culled[legacy][producer]++;continue;}
+   for(unsigned i=roadEnd;i<end;i+=3){
+    float x=0,y=0;for(int j=0;j<3;j++){const Output *v=&events[i+j].vertex;assert(v->color[3]>0 && isfinite(v->xyzw[0]) && isfinite(v->xyzw[1]));x+=v->xyzw[0]/v->xyzw[3]/3;y+=v->xyzw[1]/v->xyzw[3]/3;}
+    int px=(int)floorf(x*2160/640),py=(int)floorf(y*2160/480);
+    for(int oy=-1;oy<=1;oy++)for(int ox=-1;ox<=1;ox++){
+     float qx=(px+ox+.5f)*640/2160,qy=(py+oy+.5f)*480/2160;double road,decal;
+     if(qx<0 || qx>=640 || qy<0 || qy>=480 || !strictlyCovered(roadEnd,end,qx,qy) || !strictlyCovered(0,roadEnd,qx,qy))continue;
+     assert(sampleDepth(0,roadEnd,qx,qy,&road) && sampleDepth(roadEnd,end,qx,qy,&decal));
+     samples[legacy][producer]++;fails[legacy][producer]+=decal<=road;nearSamples+=near && !legacy;
+    }
+   }
+  }
+ }
+ for(int p=0;p<3;p++){
+  printf("full track vs %s: covered2160pixel samples=%u old_fail=%u/%u new_fail=%u old_culled=%u new_culled=%u (strict float32 depth; ties fail)\n",p==0?"pickup":p==1?"foot":"moving",samples[0][p],fails[1][p],samples[1][p],fails[0][p],culled[1][p],culled[0][p]);
+  assert(samples[0][p]>15000 && fails[1][p]>0 && !fails[0][p]);
+ }
+ assert(nearSamples>0);
+ depthScale=1;
+ for(int frame=0;frame<21;frame++)for(int producer=0;producer<3;producer++)for(int control=0;control<3;control++){
+  for(int legacy=1;legacy>=0;legacy--){
+   poseCamera(frame,0);initObject(0);identity=control==1;eye=control?0:-1;trackFloat=control!=2;
+   if(legacy)Legacy_RenderTrackD3D();else RenderTrackD3D();R_EndBatch();decalDraw(producer,legacy,5000);
+   if(legacy){referenceCount=eventCount;memcpy(reference,events,eventCount*sizeof *events);}else assert(eventCount==referenceCount && !memcmp(reference,events,eventCount*sizeof *events));
+  }controls++;
+ }
+ trackFloat=1;
+ for(int frame=0;frame<21;frame++)for(int producer=0;producer<3;producer++){
+  uint64_t saved[2];for(int pass=0;pass<4;pass++){
+   int e=pass==0 || pass==3?0:1;poseCamera(frame,e);initObject(0);RenderTrackD3D();R_EndBatch();decalDraw(producer,0,5000);
+   uint64_t h=geometryHash(1);if(pass<2)saved[e]=h;else{assert(h==saved[e]);repeats++;}
+  }
+ }
+ printf("decal/full track: near-plane road covered samples=%u native/identity/paired-old exact streams=%u reversed/repeated eyes=%u\n",nearSamples,controls,repeats);
+}
+int main(int argc,char **argv){assert(argc==2);fullTrackTest();decalTrackTest();nativeTrackTest();trackEdgesTest();pauseTest();statusTest();skyTest();skyAtlasTest();fixtureTest(argv[1]);return 0;}

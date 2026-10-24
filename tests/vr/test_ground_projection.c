@@ -24,6 +24,9 @@ typedef struct {int tex,env,blend,depth,filter;} State;
 static State state,stack[4],states[4096];static int stackCount;
 int VR_EyeActive(void){return active;}
 int VR_Repeat(void){return repeat;}
+/* This historical fixture isolates integer-camera corner projection. Full
+ * float camera/decal agreement is covered by test_pose_render.c. */
+int VR_TrackFloat(void){return 0;}
 int QueryTerrainHeight(int x,int z,int y){(void)x;(void)z;(void)y;return 0;}
 void R_SetTexEnv(R_TexEnvMode m){state.env=m;}
 void R_SetTexture(int t){state.tex=t;}

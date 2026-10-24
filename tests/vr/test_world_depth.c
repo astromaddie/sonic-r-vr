@@ -109,6 +109,8 @@ static void shadowTest(void){
  for(int f=0;f<21;f++)for(int e=0;e<2;e++){
   initDepth(1,e);int cam=(f-10)*4+(e?4:-4);surface(cam,0,0);R_EndBatch();unsigned end=eventCount;
   g_camIntX=cam;g_camIntY=200;g_camIntZ=0;
+  g_camFloatX=cam;g_camFloatY=200;g_camFloatZ=0;
+  float *m=(float *)g_floatMtxDest;memset(m,0,16*sizeof *m);m[0]=m[5]=m[10]=1;
   memset(g_viewMtx,0,sizeof(int)*16);g_viewMtx[0]=g_viewMtx[5]=g_viewMtx[10]=4096;
   int corners[12]={-30,0,5030,30,0,5030,30,0,4970,-30,0,4970};
   SubmitGroundShadow((intptr_t)corners);R_EndBatch();assert(eventCount>end);

@@ -48,7 +48,11 @@ def function(path,name,sha):
     return check(source[a:i],sha)
 a=function('vr/vr.c','transformVertex','d5b2264a06d5ccee7a3f3883fbee707345d2d4309cede0cc9678e4d5fc19cb42').replace('void transformVertex(', 'static void LegacyPoseTransform(')
 b=function('render_track_d3d.c','RenderParallaxStripsD3D','0960844e7c13f99a04a0196928f0f13a91bb21ab6ae86270782297c8515139b3').replace('void RenderParallaxStripsD3D(', 'static void LegacyPanorama(').replace('EmitSkyWaterQuad(', 'R_DrawQuad(').replace('recip256','(1.0f/256)')
-pathlib.Path(sys.argv[1]).write_text(a+'\n'+b+'\n')
+c=""
+c+=function('render_track_d3d.c','SubmitGroundShadow','981d60932f1cef03882be597367737746ec745df35029e8df730eafef1db292f').replace('void SubmitGroundShadow(', 'static void Legacy_SubmitGroundShadow(')+'\n'
+c+=function('hud_full.c','DrawFootShadows','35c22b17e32f82378d5ba927a12785ba524b6cd73faa8de9089bfb0bab77f9be').replace('void DrawFootShadows(', 'static void Legacy_DrawFootShadows(')+'\n'
+c+=function('hud_full.c','DrawMovingPickupShadow','2a853ee12f8793f20a62a2818bf1eec783649c6ad00d48c3c67af260963be11d').replace('void DrawMovingPickupShadow(', 'static void Legacy_DrawMovingPickupShadow(')+'\n'
+pathlib.Path(sys.argv[1]).write_text(a+'\n'+b+'\n'+c)
 pathlib.Path(sys.argv[1]).with_name('legacy_track.c').write_text(check(read('render_track_sdl.c'),'7bf415ea94ca25cf3e1bfa235e2a89b0c938e20e50195e6c5559382ba8010017'))
 PYPOSE
 ${CC:-cc} -Os -std=c11 -DSONICR_VR=1 -DSONICR_SDL -DRenderTrackD3D=Legacy_RenderTrackD3D \

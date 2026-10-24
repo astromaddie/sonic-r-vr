@@ -1,5 +1,6 @@
 #include "vr/vr.h"
 #include "vr/vr_projection.h"
+#include "vr/vr_world.h"
 /**
  * render_track_d3d.c — D3D track/object polygon renderer
  *
@@ -1489,6 +1490,21 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
         return;                  /* 0x460BF2 */
     }
 
+    double sx0,sy0,sx1,sy1,sx2,sy2,sx3,sy3;
+#if SONICR_VR
+    const int floatEye=VR_TrackFloat();
+    float preciseDepth[4];
+    if(floatEye) {
+        double *xs[]={&sx0,&sx1,&sx2,&sx3},*ys[]={&sy0,&sy1,&sy2,&sy3};
+        for(int i=0;i<4;i++) {
+            float p[3];vr_world_camera(verts[i*3],verts[i*3+1],verts[i*3+2],p);
+            if(p[2]<1)return;
+            preciseDepth[i]=p[2];vr_world_screen(p,xs[i],ys[i]);
+        }
+        if(floorf((preciseDepth[0]+preciseDepth[2])/16)+12>g_farClipDepth)return;
+        goto projected_ground_shadow;
+    }
+#endif
     /* Transform all 4 vertices: world → camera Z (depth, stride-4) */
     int dx0 = verts[0] - g_camIntX, dy0 = verts[1] - g_camIntY, dz0 = verts[2] - g_camIntZ;
     int camZ0 = (g_viewMtx[2]*dx0 + g_viewMtx[6]*dy0 + g_viewMtx[10]*dz0) / 4096;
@@ -1521,24 +1537,27 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
     /* Camera X/Y + screen projection for all 4 vertices (stride-4) */
     int camX0 = (g_viewMtx[0]*dx0 + g_viewMtx[4]*dy0 + g_viewMtx[8]*dz0) / 4096;
     int camY0 = (g_viewMtx[1]*dx0 + g_viewMtx[5]*dy0 + g_viewMtx[9]*dz0) / 4096;
-    double sx0 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX0, camZ0);
-    double sy0 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY0, camZ0);
+    sx0 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX0, camZ0);
+    sy0 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY0, camZ0);
 
     int camX1 = (g_viewMtx[0]*dx1 + g_viewMtx[4]*dy1 + g_viewMtx[8]*dz1) / 4096;
     int camY1 = (g_viewMtx[1]*dx1 + g_viewMtx[5]*dy1 + g_viewMtx[9]*dz1) / 4096;
-    double sx1 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX1, camZ1);
-    double sy1 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY1, camZ1);
+    sx1 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX1, camZ1);
+    sy1 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY1, camZ1);
 
     int camX2 = (g_viewMtx[0]*dx2 + g_viewMtx[4]*dy2 + g_viewMtx[8]*dz2) / 4096;
     int camY2 = (g_viewMtx[1]*dx2 + g_viewMtx[5]*dy2 + g_viewMtx[9]*dz2) / 4096;
-    double sx2 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX2, camZ2);
-    double sy2 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY2, camZ2);
+    sx2 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX2, camZ2);
+    sy2 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY2, camZ2);
 
     int camX3 = (g_viewMtx[0]*dx3 + g_viewMtx[4]*dy3 + g_viewMtx[8]*dz3) / 4096;
     int camY3 = (g_viewMtx[1]*dx3 + g_viewMtx[5]*dy3 + g_viewMtx[9]*dz3) / 4096;
-    double sx3 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX3, camZ3);
-    double sy3 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY3, camZ3);
+    sx3 = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, camX3, camZ3);
+    sy3 = vr_decal_coord(g_screenCenterY, -g_projScaleY, camY3, camZ3);
 
+#if SONICR_VR
+projected_ground_shadow:;
+#endif
     /* Screen clip: reject if ALL 4 verts outside any edge */
     if (sx0 < g_clipLeft && sx1 < g_clipLeft && sx2 < g_clipLeft && sx3 < g_clipLeft) {
         return;
@@ -1569,6 +1588,12 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
     /* Depth adjustment — 0x4610F0: fld [0x8fb364]; fadd [0x52c54c],
      * where the ROM float at 0x52c54c is -20.0. */
     float depthScale = g_farClipFloat - 20.0f;
+#if SONICR_VR
+    if(floatEye) {
+        for(int i=0;i<4;i++){preciseDepth[i]-=20;if(preciseDepth[i]<1)return;}
+    } else
+#endif
+    {
     camZ0 -= 20;
     if (camZ0 < 1) {
         return;
@@ -1586,6 +1611,7 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
         return;
     }
 
+    }
     /* Per-vertex: depth, fog alpha, build RenderVertex */
     static const float uvs[4][2] = {
         {0.0f, 0.1875f}, {0.125f, 0.1875f},
@@ -1593,11 +1619,19 @@ void SubmitGroundShadow(intptr_t param)  /* EAX = vertex data pointer */
     };
     double sxArr[4] = {sx0, sx1, sx2, sx3};
     double syArr[4] = {sy0, sy1, sy2, sy3};
-    int czArr[4] = {camZ0, camZ1, camZ2, camZ3};
+    int czArr[4];
+#if SONICR_VR
+    if(!floatEye)
+#endif
+    {czArr[0]=camZ0;czArr[1]=camZ1;czArr[2]=camZ2;czArr[3]=camZ3;}
     RenderVertex quad[4];
     int allFogged = 1;      /* every vertex alpha 0 -> whole shadow invisible */
     for (int v = 0; v < 4; v++) {
-        float fz = (float)czArr[v];
+        float fz;
+#if SONICR_VR
+        if(floatEye)fz=preciseDepth[v];else
+#endif
+        fz=(float)czArr[v];
         float depth = fz * reciprocal(depthScale);
         float invZ = reciprocal(fz);
         int alpha;

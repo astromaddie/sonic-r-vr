@@ -1,18 +1,14 @@
 #ifndef SONICR_VR_TRACK_H
 #define SONICR_VR_TRACK_H
 #include <string.h>
+#include "vr_world.h"
 /* Eye-only track scratch. Polygon indices are uint16, so this covers the full
  * source index domain without changing SrcVertex's native binary layout. */
 typedef struct { float x,y,z,u,v; int r,g,b; } VRTrackVertex;
 static float vrTrackXYZ[65536][3];
 static void VRTrackTransform(SrcVertex *v,float wx,float wy,float wz) {
-    const float *m=(const float *)g_floatMtxDest;
-    float x=wx-g_camFloatX,y=wy-g_camFloatY,z=wz-g_camFloatZ;
     float *p=vrTrackXYZ[(unsigned)(v-g_vertexArrayBase)];
-    /* Same origin, matrix and grouped additions as the float grid producer. */
-    p[0]=x*m[0]+(z*m[8]+y*m[4]);
-    p[1]=x*m[1]+(z*m[9]+y*m[5]);
-    p[2]=x*m[2]+(z*m[10]+y*m[6]);
+    vr_world_camera(wx,wy,wz,p);
     v->camX=(int)p[0];v->camY=(int)p[1];v->depth=(int)p[2];
     if(p[2]>=1){v->screenX=(int)(g_screenCenterX+g_projScaleXCurrent*p[0]/p[2]);v->screenY=(int)(g_screenCenterY-g_projScaleY*p[1]/p[2]);}
 }

@@ -170,7 +170,10 @@ trails), `SetupCharacterShadowQuad`, `DrawMovingPickupShadow`, and
 `DrawGroundParticlesD3D` (water-ring/snow decals). Their culling uses those same
 coordinates. Native depth/fog biases and flat-mode integer projection remain
 unchanged. Foot-shadow integer scratch is still populated, while the eye uses
-local fractional corners. Native culling retains integer products (double
+local fractional corners. Pickup, foot and moving pickup shadows now share the
+full float camera origin/basis with the track/grid in eye passes; their authored
+-20/-28/-16 depth offsets remain unchanged. The moving shadow applies its native
+terrain-oriented world axes consistently to X/Y/Z. Native culling retains integer products (double
 locals preserve every integer corner before emission); a near-collinear
 production control guards against float cancellation changing its sign. The
 ground particle renderer may clear a culled slot only on the canonical pass; an eye cannot remove a particle for its partner.
@@ -184,7 +187,8 @@ does. This does not introduce a new water material. Baseline native and eye
 Resort Island captures already show the reflection and blue tint.
 
 `tests/vr/run-ground-projection.sh` calls the five production ground emitters
-across 81 camera positions and both asymmetric principal points, repeating in
+under its historical integer-camera control across 81 camera positions and both
+asymmetric principal points, repeating in
 reverse eye order (324 passes). It checks nonzero area, canonical particle
 ownership, water state restoration/independence and animation, and depth at
 324 interior samples against the actual track near-clipping emitter, including
@@ -710,6 +714,8 @@ This keeps minimap icon priorities and pause text depth4 ahead of background5,
 without flattening both onto the clip boundary. Caller state is restored.
 Same-binary controls `SONICR_VR_TRACK_FLOAT=0`, `SONICR_VR_HUD_DEPTH=0` and
 `SONICR_VR_SKY_ROTATION=0` restore each previous eye path independently.
+TRACK_FLOAT=0 restores the old track and all three paired shadow transforms
+together, so its A/B control does not mix camera precision domains.
 
 `tests/vr/run-pose-render.sh` links the actual installed 2ebbb33 track TU and
 extracts its actual panorama/emitter as hashed controls. The full track object
@@ -717,7 +723,13 @@ loop produces 2,106 baseline leaks versus zero corrected leaks over 15,876
 interior float32 road/grid samples (horizontal/tilted planes, combined poses,
 far 8000/88000; ties fail). It also checks 81 exact native/identity/legacy-control
 streams, near clipping with exact native fan/UV/color order, nonzero local
-rotations, conservative bounds and reversed eye repeats. Actual pause, minimap,
+rotations, conservative bounds and reversed eye repeats. The actual full track
+and three actual shadow producers additionally cover 67,353 strictly interior
+2160-square pixel samples, including 19,845 over near-clipped roads: old pickup,
+foot and moving shadows fail 250/170/183 samples; corrected shadows fail zero
+(ties fail). There are 189 byte-exact native/identity/paired-old streams and 126
+reversed/repeated-eye checks. The hashed old shadow functions are identical in
+2ebbb33 and 56cbf59. Actual pause, minimap,
 status/results producers retain interior depth priorities. Wide asymmetric,
 canted-eye sky coverage has 355 baseline holes versus zero over 7,730 upper-sky
 samples, across all five tracks/mirror modes. At native FOV, neutral optical-axis atlas

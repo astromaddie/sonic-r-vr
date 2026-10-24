@@ -1,5 +1,6 @@
 #include "vr/vr.h"
 #include "vr/vr_projection.h"
+#include "vr/vr_world.h"
 /**
  * hud_full.c — Full HUD rendering dispatcher and countdown
  *
@@ -832,6 +833,9 @@ int g_footShadowVerts[80 * 64];  /* 0x00909320 — 80 entries × 4 verts × 16 i
 void DrawFootShadows(void)
 {
     int tpage = g_tpageCharBase;
+#if SONICR_VR
+    const int floatEye=VR_TrackFloat();
+#endif
 
     /* depthScale = g_farClipFloat + (-28.0f) — ROM constant at 0x52C314 */
     float depthScale = g_farClipFloat - 28.0f;
@@ -862,6 +866,22 @@ void DrawFootShadows(void)
         }
 
         double sx[4], sy[4];
+#if SONICR_VR
+        float preciseDepth[4];
+        if(floatEye) {
+            int *v[4]={v0base,v1base,v2base,v3base};int visible=1;
+            for(int j=0;j<4;j++) {
+                float p[3];vr_world_camera(v[j][5],v[j][6],v[j][7],p);
+                if(p[2]<1 || p[2]>g_farClipTimes8 || p[2]-28<1){visible=0;break;}
+                vr_world_screen(p,sx+j,sy+j);preciseDepth[j]=p[2]-28;
+                v[j][0]=(int)sx[j];v[j][1]=(int)sy[j];v[j][12]=(int)preciseDepth[j];
+            }
+            if(!visible)continue;
+            double cross=(sy[0]-sy[1])*(sx[2]-sx[1])-(sx[0]-sx[1])*(sy[2]-sy[1]);
+            if(g_mirrorMode)cross=-cross;if(cross<0)continue;
+            goto projected_foot_shadow;
+        }
+#endif
         /* Transform vertex 0 (edi in binary) */
         int dX, dY, dZ, cz0, cx0, cy0;
         dX = v0base[5] - g_camIntX;   /* world X at offset 0x14 */
@@ -961,6 +981,9 @@ void DrawFootShadows(void)
         if (v3base[12] < 1) {
             continue;
         }
+#if SONICR_VR
+projected_foot_shadow:;
+#endif
         /* Clip test */
         if (!(g_clipLeft <= sx[0] || g_clipLeft <= sx[1] ||
               g_clipLeft <= sx[2] || g_clipLeft <= sx[3])) {
@@ -986,7 +1009,11 @@ void DrawFootShadows(void)
 
         RenderVertex quadVerts[4];
         for (int vi = 0; vi < 4; vi++) {
-            int adjDepth = vertPtrs[vi][12];
+            float adjDepth;
+#if SONICR_VR
+            if(floatEye)adjDepth=preciseDepth[vi];else
+#endif
+            adjDepth=(float)vertPtrs[vi][12];
             float fDepth = (float)adjDepth * recipDepthScale; // / depthScale;
 
             /* Fog alpha: 0xC0 (near) → 0 (far), thresholds 0.7 / 0.9 */
@@ -1991,6 +2018,26 @@ void DrawMovingPickupShadow(int worldX, int worldY, int worldZ, int scale)
     int rowB_1 = 0;                            /* [ebp-0xa4]/4096 = 0 */
     int rowB_2 = (cos0 * cosI) / 4096;        /* 0x45b3c6-0x45b3cc: [ebp-0x14] */
 
+    double sx[4],sy[4];
+#if SONICR_VR
+    const int floatEye=VR_TrackFloat();
+    float preciseDepth[4];
+    if(floatEye) {
+        const int forward[4]={-1,1,1,-1},up[4]={1,1,-1,-1};
+        for(int i=0;i<4;i++) {
+            float f=forward[i]*scale/4096.0f,u=up[i]*scale/4096.0f,p[3];
+            /* Keep the native terrain-normal/local axes. Apply one coherent
+             * world-to-camera transform to all three components. */
+            vr_world_camera(worldX/4096.0f+f*rowA_1+u*rowB_0,
+                            height/4096.0f+f*rowA_0+u*rowB_1,
+                            worldZ/4096.0f+f*rowA_2+u*rowB_2,p);
+            if(p[2]<1)return;
+            preciseDepth[i]=p[2];vr_world_screen(p,sx+i,sy+i);
+        }
+        if(floorf((preciseDepth[0]+preciseDepth[2])/16)+12>g_farClipDepth)return;
+        goto projected_moving_shadow;
+    }
+#endif
     /* Camera-relative position */
     int dX = (worldX - g_camOrientX) / 4096;  /* 0x45b3d8: [ebp-0x18] */
     int dY = (height - g_camOrientY) / 4096;  /* 0x45b3e9: [ebp-0x10] */
@@ -2104,12 +2151,14 @@ void DrawMovingPickupShadow(int worldX, int worldY, int worldZ, int scale)
     vy[3] = (nsFy + nsUy + ctr_y_sc) / 4096;
 
     /* Perspective projection */
-    double sx[4], sy[4];
     for (int i = 0; i < 4; i++) {                                       /* 0x45b758-0x45b99a */
         sx[i] = vr_decal_coord(g_screenCenterX, g_projScaleXCurrent, vx[i], depth[i]);
         sy[i] = vr_decal_coord(g_screenCenterY, -g_projScaleY, vy[i], depth[i]);
     }
 
+#if SONICR_VR
+projected_moving_shadow:;
+#endif
     /* Viewport clipping */                                /* 0x45b99c-0x45ba4a */
     if (sx[0] < g_clipLeft && sx[1] < g_clipLeft && sx[2] < g_clipLeft && sx[3] < g_clipLeft) {
         return;
@@ -2134,6 +2183,9 @@ void DrawMovingPickupShadow(int worldX, int worldY, int worldZ, int scale)
 
     /* Z bias: subtract 16, clamp to 1 */                 /* 0x45ba50-0x45bac8 */
     for (int i = 0; i < 4; i++) {
+#if SONICR_VR
+        if(floatEye){preciseDepth[i]=fmaxf(1,preciseDepth[i]-16);continue;}
+#endif
         depth[i] -= 0x10;
         if (depth[i] < 1) {
             depth[i] = 1;
@@ -2153,7 +2205,11 @@ void DrawMovingPickupShadow(int worldX, int worldY, int worldZ, int scale)
     int maxAlpha = 0x80;                                             /* [ebp-0x30] */
     RenderVertex verts[4];
     for (int i = 0; i < 4; i++) {                                       /* 0x45bc0f-0x45be7b */
-        float fDepth = (float)depth[i];
+        float fDepth;
+#if SONICR_VR
+        if(floatEye)fDepth=preciseDepth[i];else
+#endif
+        fDepth=(float)depth[i];
         float normZ = fDepth / g_farClipFloat;
 
         /* Fog alpha from normalized depth */
