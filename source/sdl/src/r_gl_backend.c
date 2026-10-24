@@ -9,6 +9,9 @@
 /* SOFT=1 builds replace this whole file with r_soft_backend.c. */
 #ifndef SONICR_SOFT_RENDER
 
+#ifndef GL_GLEXT_PROTOTYPES
+#define GL_GLEXT_PROTOTYPES
+#endif
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #elif defined(_WIN32)
@@ -138,6 +141,38 @@ static void GL_ApplyTpageFilter(int tp)
 #if SONICR_VR
 static int s_vrBatching=1,s_batchOpen,s_vrDepthReversed;
 static unsigned s_batchVertices;
+/* Bounded client storage; split only at triangle boundaries. No GPU resource
+ * lifetime is introduced. Array pointers are consumed by glDrawArrays. */
+#define R_ARRAY_VERTICES 3072u
+typedef struct { float xyzw[4],color[4],uv[2]; } R_ArrayVertex;
+static R_ArrayVertex s_arrayVertices[R_ARRAY_VERTICES];
+static int s_vrClientArrays,s_batchArrays;
+static float s_arrayColor[4];
+static void R_SubmitArray(void)
+{
+    if (!s_batchVertices) return;
+    /* This backend is the sole array/buffer client in the desktop renderer.
+     * Explicitly use client memory and texture unit0. Save all client vertex
+     * state (including pointers, enables and buffer bindings), without queries. */
+    glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT);
+    glBindBuffer(GL_ARRAY_BUFFER,0);
+    glClientActiveTexture(GL_TEXTURE0);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glVertexPointer(4,GL_FLOAT,sizeof(R_ArrayVertex),s_arrayVertices[0].xyzw);
+    glColorPointer(4,GL_FLOAT,sizeof(R_ArrayVertex),s_arrayVertices[0].color);
+    glTexCoordPointer(2,GL_FLOAT,sizeof(R_ArrayVertex),s_arrayVertices[0].uv);
+    glDrawArrays(GL_TRIANGLES,0,(GLsizei)s_batchVertices);
+    glPopClientAttrib();
+    /* DrawArrays makes current enabled attributes unspecified. Preserve the
+     * final immediate color/UV for raw GL and native/menu draws after barriers. */
+    const R_ArrayVertex *last=s_arrayVertices+s_batchVertices-1;
+    glColor4f(last->color[0],last->color[1],last->color[2],last->color[3]);
+    glTexCoord2f(last->uv[0],last->uv[1]);
+    VR_TraceArrayBatch(s_batchVertices);
+    s_batchVertices=0;
+}
 static unsigned s_earlyFlushRemaining;
 static uint32_t s_batchColor;
 static int s_batchColorValid;
@@ -146,10 +181,15 @@ static unsigned char s_batchFilter;
 void R_EndBatch(void)
 {
     if (!s_batchOpen) return;
-    glEnd();
-    s_batchOpen=0;s_batchColorValid=0;
-    VR_TraceBatch(s_batchVertices);
+    if (s_batchArrays) R_SubmitArray();
+    else {glEnd();VR_TraceBatch(s_batchVertices);}
+    s_batchOpen=0;s_batchArrays=0;s_batchColorValid=0;
     s_batchVertices=0;
+}
+void R_SetVRClientArrays(int enabled)
+{
+    R_EndBatch();
+    s_vrClientArrays=enabled!=0;
 }
 void R_SetVRBatching(int enabled)
 {
@@ -509,9 +549,21 @@ static inline void R_EmitVertex(const RenderVertex *v)
         float r = (float)((argb >> 16) & 0xFF) / 255.0f;
         float g = (float)((argb >>  8) & 0xFF) / 255.0f;
         float b = (float)((argb      ) & 0xFF) / 255.0f;
+#if SONICR_VR
+        if (s_batchArrays) {
+            s_arrayColor[0]=r;s_arrayColor[1]=g;s_arrayColor[2]=b;s_arrayColor[3]=a;
+        } else
+#endif
         glColor4f(r, g, b, a);
 #if SONICR_VR
         if (s_batchOpen) { s_batchColor=argb;s_batchColorValid=1; }
+    }
+    if (s_batchArrays) {
+        R_ArrayVertex *out=s_arrayVertices+s_batchVertices++;
+        memcpy(out->color,s_arrayColor,sizeof out->color);
+        out->uv[0]=v->u;out->uv[1]=v->v;
+        VR_TransformVertex(v,out->xyzw);
+        return;
     }
 #endif
     glTexCoord2f(v->u, v->v);
@@ -544,15 +596,17 @@ void R_DrawTriFan(const RenderVertex *v, int count)
         if (!s_batchOpen || memcmp(&s_batchState,&s_desired,sizeof(s_desired)) ||
             filter!=s_batchFilter || (textured && s_glTextureDirty[tp])) {
             R_FlushState();
-            glBegin(GL_TRIANGLES);
+            s_batchArrays=s_vrClientArrays;
+            if (!s_batchArrays) glBegin(GL_TRIANGLES);
             s_batchOpen=1;s_batchVertices=0;s_batchColorValid=0;
             s_batchState=s_desired;s_batchFilter=filter;
         }
         /* Exactly the original fan's triangle/vertex order, including its
          * provoking vertex. Transform immediately with the current eye/layer. */
         for (int i=1;i<count-1;i++) {
+            if (s_batchArrays && s_batchVertices+3>R_ARRAY_VERTICES) R_SubmitArray();
             R_EmitVertex(v);R_EmitVertex(v+i);R_EmitVertex(v+i+1);
-            s_batchVertices+=3;
+            if (!s_batchArrays) s_batchVertices+=3;
         }
         if (s_earlyFlushRemaining) R_EyeDrawSubmitted();
         return;

@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include "legacy_draw.h"
-static int legacyRenderer;
+static int legacyRenderer,fixtureArrays;
 void *g_tpagePixelBuf[52];
 int g_tpageWidth[52],g_tpageHeight[52];
 PrecipParticle g_precipParticles[128];
@@ -26,6 +26,7 @@ static GLState gpu;static Texture textures[256];static GLenum primitive,matrixMo
 static float color[4],uv[2];static Output fan[128];static unsigned fanCount,triangleIndex;
 static Event events[32768],reference[32768];static unsigned eventCount,referenceCount,begins,logicalFans;
 static unsigned nextTexture=1,reads,swaps,releaseCount,beginSlots[3],colorCalls,flushCalls,finishCalls;
+static unsigned arrayDraws;
 static int raceProtocol,raceOwned[2],raceDone[2],raceCaptures;
 static unsigned pairFinishes,attachedTexture,captureMask,raceEyeFlush[2],raceRenders[3];
 static void outside(void){assert(!primitive);}
@@ -38,6 +39,35 @@ void glVertex4f(GLfloat x,GLfloat y,GLfloat z,GLfloat w){
  memcpy(o.color,color,sizeof color);memcpy(o.uv,uv,sizeof uv);o.state=gpu;o.texture=textures[gpu.texture];
  if(primitive==GL_TRIANGLES){record(1,&o);triangleIndex++;}
  else {assert(fanCount<128);fan[fanCount++]=o;if(fanCount>=3){record(1,fan);record(1,fan+fanCount-2);record(1,fan+fanCount-1);}}
+}
+/* Model client state separately from server state. A draw deliberately poisons
+ * current color/UV, as the GL specification permits, to enforce restoration. */
+typedef struct {GLint size;GLenum type;GLsizei stride;const void *pointer;GLuint buffer;} ArrayPointer;
+typedef struct {unsigned enabled;GLenum unit;GLuint buffer;ArrayPointer vertex,color,tex[4];} ClientState;
+static ClientState client,savedClient;
+static int clientPushed;
+static unsigned clientBit(GLenum cap){switch(cap){case GL_VERTEX_ARRAY:return 1;case GL_COLOR_ARRAY:return 2;case GL_TEXTURE_COORD_ARRAY:return 4u<<(client.unit-GL_TEXTURE0);default:assert(0);return 0;}}
+void glPushClientAttrib(GLbitfield bits){outside();assert(bits==GL_CLIENT_VERTEX_ARRAY_BIT && !clientPushed);savedClient=client;clientPushed=1;}
+void glPopClientAttrib(void){outside();assert(clientPushed);client=savedClient;clientPushed=0;}
+void glBindBuffer(GLenum target,GLuint buffer){outside();assert(target==GL_ARRAY_BUFFER);client.buffer=buffer;}
+void glClientActiveTexture(GLenum unit){outside();assert(unit>=GL_TEXTURE0 && unit<GL_TEXTURE0+4);client.unit=unit;}
+void glEnableClientState(GLenum cap){outside();client.enabled|=clientBit(cap);}
+void glDisableClientState(GLenum cap){outside();client.enabled&=~clientBit(cap);}
+static void pointer(ArrayPointer *p,GLint size,GLenum type,GLsizei stride,const void *data){outside();*p=(ArrayPointer){size,type,stride,data,client.buffer};}
+void glVertexPointer(GLint size,GLenum type,GLsizei stride,const void *data){pointer(&client.vertex,size,type,stride,data);}
+void glColorPointer(GLint size,GLenum type,GLsizei stride,const void *data){pointer(&client.color,size,type,stride,data);}
+void glTexCoordPointer(GLint size,GLenum type,GLsizei stride,const void *data){pointer(client.tex+client.unit-GL_TEXTURE0,size,type,stride,data);}
+static const float *arrayElement(const ArrayPointer *p,unsigned i,int size){assert(p->size==size && p->type==GL_FLOAT && !p->buffer && p->stride>0 && p->pointer);return (const float *)((const char *)p->pointer+i*p->stride);}
+void glDrawArrays(GLenum mode,GLint first,GLsizei count){
+ outside();assert(clientPushed && mode==GL_TRIANGLES && first==0 && count>0 && count%3==0 && count<=R_ARRAY_VERTICES);
+ assert(client.unit==GL_TEXTURE0 && (client.enabled&7)==7 && !client.buffer);
+ arrayDraws++;beginSlots[eye<0?0:eye+1]++;primitive=GL_TRIANGLES;triangleIndex=0;
+ for(int i=0;i<count;i++){
+  const float *p=arrayElement(&client.vertex,i,4);memcpy(color,arrayElement(&client.color,i,4),sizeof color);memcpy(uv,arrayElement(client.tex,i,2),sizeof uv);
+  glVertex4f(p[0],p[1],p[2],p[3]);
+ }
+ assert(triangleIndex==(unsigned)count);primitive=0;
+ for(int i=0;i<4;i++)color[i]=NAN;for(int i=0;i<2;i++)uv[i]=NAN;
 }
 void glColor4f(GLfloat r,GLfloat g,GLfloat b,GLfloat a){colorCalls++;color[0]=r;color[1]=g;color[2]=b;color[3]=a;}
 void glTexCoord2f(GLfloat u,GLfloat v){uv[0]=u;uv[1]=v;}
@@ -128,7 +158,8 @@ static void setup(int enabled,int mode){
  s_glTexturesInited=1;nextTexture=53;for(int i=0;i<52;i++){s_glTextures[i]=i+1;g_tpageWidth[i]=g_tpageHeight[i]=2;}
  static unsigned short pixels[4]={0x1234,0x3456,0x5678,0x789a};g_tpagePixelBuf[0]=pixels;g_tpagePixelBuf[1]=pixels;
  eventCount=begins=logicalFans=reads=swaps=releaseCount=colorCalls=flushCalls=finishCalls=0;memset(beginSlots,0,sizeof beginSlots);
- perfEnabled=1;modeRace=1;memset(perfSubmits,0,sizeof perfSubmits);memset(perfVertices,0,sizeof perfVertices);
+ perfEnabled=1;modeRace=1;memset(perfArraySubmits,0,sizeof perfArraySubmits);memset(perfSubmits,0,sizeof perfSubmits);memset(perfVertices,0,sizeof perfVertices);
+ R_SetVRClientArrays(fixtureArrays);arrayDraws=0;
  traceStart();R_SetVRBatching(enabled);R_ResetState();g_screenWidth=640;g_screenHeight=480;g_screenHeightFull=480;
  g_screenCenterX=320;g_screenCenterY=240;g_projScaleXCurrent=g_projScaleY=320;g_farClipFloat=32768;
  initialized=1;diagnostic=0;identity=mode==2;eye=mode?0:-1;framebuffer=5;
@@ -162,10 +193,11 @@ static void scenario(int enabled,int mode){
  R_MarkTextureDirty(0);draw(4);draw(4);GL_UploadTpage(0);draw(3);
  unsigned char rgba[16]={0};GL_UploadTpageRGBA(0,rgba,2,2);draw(4);GL_UploadTpageSubRect(0,0,0,1,1);draw(3);
  draw(3);R_SetVRBatching(0);outside();draw(4);R_SetVRBatching(enabled);draw(5);
+ R_SetVRClientArrays(!fixtureArrays);outside();draw(3);R_SetVRClientArrays(fixtureArrays);outside();draw(5);
  R_FlushState();outside();draw(4);R_ClearDepth();draw(3);ProcessTpageStates();draw(4);RenderBackground();draw(4);
  R_ResetState();draw(3);BeginFrame();draw(4);SetViewportFromConfig(NULL);outside();draw(3);
  if(mode){
-  VR_Layer(1);outside();draw(4);VR_SkyBegin();outside();draw(4);VR_SkyEnd();outside();draw(4);
+  VR_Layer(1);outside();draw(4);VR_SkyBegin();outside();draw(4);VR_SkyEnd();outside();draw(4);VR_Layer(3);outside();draw(4);VR_Layer(0);
   int *cam=current;VR_ApplyCamera(&cam);outside();draw(4);
   attachment("batch-fixture",1);outside();draw(4);imageFingerprint(0);outside();draw(3);
   capture("batch-fixture",2,2);outside();draw(4);release();outside();target(1);draw(3);
@@ -253,8 +285,37 @@ static void earlyFlushTest(void){
  }
  puts("early flush production: once per race eye, batch on/off, thresholds1/3/12, no native/identity/menu flush, repeated/reversed eyes, state/layer boundaries, release/abandon reset; exact vertices/state and no finish/readback");
 }
+static void arrayStorageTest(void){
+ for(int mode=0;mode<3;mode++){
+  fixtureArrays=0;setup(1,mode);BeginFrame();
+  for(int i=0;i<700;i++)draw(7);
+  R_EndBatch();referenceCount=eventCount;memcpy(reference,events,eventCount*sizeof *events);
+  float lastColor[4],lastUV[2];memcpy(lastColor,color,sizeof color);memcpy(lastUV,uv,sizeof uv);
+  fixtureArrays=1;setup(1,mode);BeginFrame();
+  /* Foreign client pointers/buffer/unit are untouched after every submit. They
+   * are never dereferenced; desktop production itself has no other array user. */
+  memset(&client,0,sizeof client);client.unit=GL_TEXTURE0+3;client.buffer=77;client.enabled=1|4;
+  client.vertex=(ArrayPointer){2,GL_SHORT,8,(void *)16,66};
+  client.color=(ArrayPointer){3,GL_UNSIGNED_BYTE,4,(void *)32,55};
+  client.tex[0]=(ArrayPointer){3,GL_SHORT,12,(void *)48,44};
+  client.tex[3]=(ArrayPointer){4,GL_FLOAT,16,(void *)64,33};
+  ClientState initial=client;
+  for(int i=0;i<700;i++)draw(7);
+  R_EndBatch();
+  assert(!memcmp(&client,&initial,sizeof client) && !clientPushed);
+  assert(eventCount==referenceCount && !memcmp(reference,events,eventCount*sizeof *events));
+  assert(!memcmp(lastColor,color,sizeof color) && !memcmp(lastUV,uv,sizeof uv));
+  assert(arrayDraws==(mode==1?4u:0u));
+  /* A following immediate draw inherits the same last attributes. */
+  glBegin(GL_TRIANGLES);for(int i=0;i<3;i++)glVertex4f(i,i,0,1);glEnd();
+  for(unsigned i=eventCount-3;i<eventCount;i++)assert(!memcmp(events[i].vertex.color,lastColor,sizeof color) && !memcmp(events[i].vertex.uv,lastUV,sizeof uv));
+  memset(&client,0,sizeof client);client.unit=GL_TEXTURE0;
+ }
+ fixtureArrays=0;puts("client arrays: 10500 vertices, exact intra-fan overflow splits at3072/6144/9216, inherited attributes restored, client pointers/enables/unit/buffers restored, native/identity bypass");
+}
 int main(int argc,char **argv){
- assert(argc==2);dumpDir=argv[1];
+ assert(argc==2);dumpDir=argv[1];arrayStorageTest();
+ for(fixtureArrays=0;fixtureArrays<2;fixtureArrays++){
  colorTest();earlyFlushTest();
  for(int mode=0;mode<3;mode++){
   legacyRenderer=1;scenario(0,mode);referenceCount=eventCount;memcpy(reference,events,eventCount*sizeof *events);
@@ -267,36 +328,44 @@ int main(int argc,char **argv){
    for(unsigned i=0;i<eventCount;i++)if(memcmp(reference+i,events+i,sizeof *events)){fprintf(stderr,"event mismatch mode=%d event=%u type=%d/%d\n",mode,i,reference[i].type,events[i].type);break;}
    assert(0);
   }
-  if(mode==1)assert(begins<oldBegins);else assert(begins==oldBegins);
-  unsigned submits=perfSubmits[0]+perfSubmits[1]+perfSubmits[2];assert(submits==begins);
+  if(mode==1)assert(begins+arrayDraws<oldBegins);else assert(begins==oldBegins && !arrayDraws);
+  unsigned submits=perfSubmits[0]+perfSubmits[1]+perfSubmits[2];assert(submits==begins+arrayDraws);
+  assert(perfArraySubmits[0]+perfArraySubmits[1]+perfArraySubmits[2]==arrayDraws);
   assert(!memcmp(perfSubmits,beginSlots,sizeof beginSlots));
-  printf("batch production legacy+optout mode=%s fans=%u events=%u old_submits=%u new_submits=%u exact_triangles_state=1 legal_gl=1\n",mode==0?"native":mode==1?"eye":"identity",logicalFans,eventCount,oldBegins,begins);
+  printf("batch production legacy+optout mode=%s fans=%u events=%u old_submits=%u new_submits=%u array_submits=%u exact_triangles_state=1 legal_gl=1\n",mode==0?"native":mode==1?"eye":"identity",logicalFans,eventCount,oldBegins,submits,arrayDraws);
  }
  /* Pending race geometry must close before the menu copy and its direct
   * GL_QUADS block. This path intentionally has no backend fan counter. */
  setup(1,1);pairedComplete=1;BeginFrame();draw(4);presented=0;anchored=wasFocused=1;clockState=(VRClock){0};
  assert(VR_Present()==1);outside();assert(releaseCount==2);VR_Shutdown();
  puts("batch production menu transition: pending eye geometry closed before copy and direct quad draws");
+ }
+ fixtureArrays=0;
  /* Test the actual environment route, not only its backend setter. */
  setenv("SONICR_VR_DIAGNOSTIC","1",1);unsetenv("SONICR_VR_OFFHEAD_RENDER");unsetenv("SONICR_VR_OFFHEAD_NEUTRAL");
+ unsetenv("SONICR_VR_CLIENT_ARRAYS");
  unsetenv("SONICR_VR_EARLY_FLUSH_DRAWS");unsetenv("SONICR_VR_PAIRED_COMPLETE");unsetenv("SONICR_VR_DEPTH");unsetenv("SONICR_VR_OFFHEAD_RUNTIME_FOV");
  setenv("SONICR_VR_BATCH","0",1);assert(VR_Init());assert(!batching && !s_vrBatching && pairedComplete && perspectiveDepth);VR_Shutdown();
- unsetenv("SONICR_VR_BATCH");assert(VR_Init());assert(batching && s_vrBatching && perspectiveDepth && earlyFlushDraws==2048 && !s_earlyFlushRemaining);VR_Shutdown();
+ unsetenv("SONICR_VR_BATCH");assert(VR_Init());assert(batching && s_vrBatching && perspectiveDepth && earlyFlushDraws==2048 && !s_earlyFlushRemaining && clientArrays && s_vrClientArrays);VR_Shutdown();
  setenv("SONICR_VR_EARLY_FLUSH_DRAWS","0",1);assert(VR_Init());assert(!earlyFlushDraws && !s_earlyFlushRemaining);VR_Shutdown();
  setenv("SONICR_VR_EARLY_FLUSH_DRAWS","3",1);assert(VR_Init());assert(earlyFlushDraws==3 && !s_earlyFlushRemaining);VR_Shutdown();
  unsetenv("SONICR_VR_EARLY_FLUSH_DRAWS");
+ setenv("SONICR_VR_CLIENT_ARRAYS","1",1);assert(VR_Init());assert(clientArrays && s_vrClientArrays);VR_Shutdown();
+ setenv("SONICR_VR_CLIENT_ARRAYS","0",1);assert(VR_Init());assert(!clientArrays && !s_vrClientArrays);VR_Shutdown();
+ unsetenv("SONICR_VR_CLIENT_ARRAYS");
+ puts("client arrays startup: default on, explicit1 enabled, explicit0 disabled");
  puts("early flush startup: unset defaults2048; explicit0 disables; explicit3 selects threshold; startup never arms an eye");
  puts("batch production environment: explicit 0 disables batching; unset batching and depth default on");
  setenv("SONICR_VR_PAIRED_COMPLETE","1",1);assert(VR_Init());assert(pairedComplete);VR_Shutdown();
  setenv("SONICR_VR_PAIRED_COMPLETE","0",1);assert(VR_Init());assert(!pairedComplete);VR_Shutdown();
  setenv("SONICR_VR_DEPTH","1",1);assert(VR_Init());assert(perspectiveDepth);VR_Shutdown();
  setenv("SONICR_VR_DEPTH","0",1);assert(VR_Init());assert(!perspectiveDepth);VR_Shutdown();
- pid_t bad=fork();assert(bad>=0);
+ fflush(NULL);pid_t bad=fork();assert(bad>=0);
  if(!bad){setenv("SONICR_VR_OFFHEAD_RUNTIME_FOV","1",1);VR_Init();_exit(0);}
  int status;assert(waitpid(bad,&status,0)==bad);assert(WIFEXITED(status) && WEXITSTATUS(status)!=0);
  puts("runtime FOV production startup: invalid diagnostic/neutral flag combination rejected");
  dumpDir=argv[1];
- for(int paired=0;paired<2;paired++)for(int captures=0;captures<2;captures++)for(int reverse=0;reverse<2;reverse++)for(int early=0;early<2;early++)raceProtocolTest(paired,captures,reverse,early);
+ for(fixtureArrays=0;fixtureArrays<2;fixtureArrays++)for(int paired=0;paired<2;paired++)for(int captures=0;captures<2;captures++)for(int reverse=0;reverse<2;reverse++)for(int early=0;early<2;early++)raceProtocolTest(paired,captures,reverse,early);
  puts("race completion: actual render loop default/opt-out, no normal readbacks, paired captures after shared finish before either release passed");
  return 0;
 }

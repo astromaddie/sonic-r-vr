@@ -6,6 +6,15 @@
 #include "legacy_emitter.h"
 static float emitted[4];static unsigned comparisons;
 void glVertex4f(GLfloat x,GLfloat y,GLfloat z,GLfloat w){emitted[0]=x;emitted[1]=y;emitted[2]=z;emitted[3]=w;}
+void glPushClientAttrib(GLbitfield mask){(void)mask;assert(0);}
+void glPopClientAttrib(void){assert(0);}
+void glBindBuffer(GLenum target,GLuint buffer){(void)target;(void)buffer;assert(0);}
+void glClientActiveTexture(GLenum unit){(void)unit;assert(0);}
+void glEnableClientState(GLenum cap){(void)cap;assert(0);}
+void glVertexPointer(GLint size,GLenum type,GLsizei stride,const void *p){(void)size;(void)type;(void)stride;(void)p;assert(0);}
+void glColorPointer(GLint size,GLenum type,GLsizei stride,const void *p){(void)size;(void)type;(void)stride;(void)p;assert(0);}
+void glTexCoordPointer(GLint size,GLenum type,GLsizei stride,const void *p){(void)size;(void)type;(void)stride;(void)p;assert(0);}
+void glDrawArrays(GLenum mode,GLint first,GLsizei count){(void)mode;(void)first;(void)count;assert(0);}
 void glEnd(void){assert(0 && "projection fixture never opens a batch");}
 void glColor4f(GLfloat r,GLfloat g,GLfloat b,GLfloat a){(void)r;(void)g;(void)b;(void)a;}
 void glTexCoord2f(GLfloat u,GLfloat v){(void)u;(void)v;}
@@ -38,6 +47,7 @@ static void compare(RenderVertex v){
   for(int i=0;i<4;i++)fprintf(stderr," component %d old=%a cached=%a\n",i,expected[i],emitted[i]);
   assert(0);
  }
+ float transformed[4];VR_TransformVertex(&v,transformed);assert(!memcmp(expected,transformed,sizeof expected));
  /* Exercise the actual backend dispatch as well, not just its VR function. */
  R_EmitVertex(&v);assert(!memcmp(expected,emitted,sizeof expected));comparisons++;
 }

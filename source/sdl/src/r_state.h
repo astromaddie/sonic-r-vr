@@ -79,10 +79,11 @@ void R_ResetState(void);
 void R_FlushState(void);
 
 /* End adjacent eye triangles before any raw GL/state/resource boundary.
- * This only calls glEnd: it does not flush or wait for GPU completion. */
+ * Submits pending vertices; it does not flush or wait for GPU completion. */
 #if SONICR_VR
 void R_EndBatch(void);
 void R_SetVRBatching(int enabled);
+void R_SetVRClientArrays(int enabled);
 /* Arm at most one early flush after N race-eye fans; zero disables/resets. */
 void R_SetVREarlyFlush(unsigned draws);
 void R_SetVRDepthReversed(int enabled);

@@ -64,7 +64,9 @@ static int perfEnabled,perfWeatherActive;
 static double perfWindow,perfLastFrame,perfSimStart,perfWeatherStart,perfMaxInterval;
 static double perfMs[8],perfWeatherMs[3];
 static unsigned perfFrames,perfTicks,perfDraws[3],perfWeatherDraws[3],perfSubmits[3],perfVertices[3];
+static unsigned perfArraySubmits[3];
 static int batching=1;
+static int clientArrays;
 static unsigned earlyFlushDraws;
 static int pairedComplete;
 static int perspectiveDepth;
@@ -87,16 +89,17 @@ static void perfReport(void) {
     if(!perfEnabled)return;
     double now=perfNow(),elapsed=now-perfWindow;
     if(elapsed<1000 || !perfFrames)return;
-    fprintf(stderr,"[vr-perf] track=%d weather=%d tod=%d frames=%u ticks=%u wall_ms=%.3f fps=%.2f tick_hz=%.2f max_interval_ms=%.3f begin_ms=%.3f sim_ms=%.3f native_ms=%.3f acquire_ms=%.3f eyes_ms=%.3f release_ms=%.3f end_ms=%.3f mirror_ms=%.3f draws=%u,%u,%u weather_draws=%u,%u,%u gl_submits=%u,%u,%u gl_vertices=%u,%u,%u batch=%d paired_complete=%d early_flush_draws=%u fixture_replay=%d replay_pad=%u weather_ms=%.3f,%.3f,%.3f synthetic=%d observer=%d\n",
+    fprintf(stderr,"[vr-perf] track=%d weather=%d tod=%d frames=%u ticks=%u wall_ms=%.3f fps=%.2f tick_hz=%.2f max_interval_ms=%.3f begin_ms=%.3f sim_ms=%.3f native_ms=%.3f acquire_ms=%.3f eyes_ms=%.3f release_ms=%.3f end_ms=%.3f mirror_ms=%.3f draws=%u,%u,%u weather_draws=%u,%u,%u gl_submits=%u,%u,%u gl_vertices=%u,%u,%u gl_array_submits=%u,%u,%u batch=%d client_arrays=%d paired_complete=%d early_flush_draws=%u fixture_replay=%d replay_pad=%u weather_ms=%.3f,%.3f,%.3f synthetic=%d observer=%d\n",
         g_trackId,g_weatherType,g_timeOfDay,perfFrames,perfTicks,elapsed,perfFrames*1000/elapsed,perfTicks*1000/elapsed,perfMaxInterval,
         perfMs[0]/perfFrames,perfMs[1]/perfFrames,perfMs[2]/perfFrames,perfMs[3]/perfFrames,perfMs[4]/perfFrames,perfMs[5]/perfFrames,perfMs[6]/perfFrames,perfMs[7]/perfFrames,
         perfDraws[0],perfDraws[1],perfDraws[2],perfWeatherDraws[0],perfWeatherDraws[1],perfWeatherDraws[2],
-        perfSubmits[0],perfSubmits[1],perfSubmits[2],perfVertices[0],perfVertices[1],perfVertices[2],batching,pairedComplete,earlyFlushDraws,fixtureReplay,replayIndex,
+        perfSubmits[0],perfSubmits[1],perfSubmits[2],perfVertices[0],perfVertices[1],perfVertices[2],perfArraySubmits[0],perfArraySubmits[1],perfArraySubmits[2],batching,clientArrays,pairedComplete,earlyFlushDraws,fixtureReplay,replayIndex,
         perfWeatherMs[0]/perfFrames,perfWeatherMs[1]/perfFrames,perfWeatherMs[2]/perfFrames,diagnostic,diagnostic || runtimeDump || stereoCheck);
     perfWindow=now;perfFrames=perfTicks=0;perfMaxInterval=0;
     memset(perfMs,0,sizeof perfMs);memset(perfWeatherMs,0,sizeof perfWeatherMs);
     memset(perfDraws,0,sizeof perfDraws);memset(perfWeatherDraws,0,sizeof perfWeatherDraws);
     memset(perfSubmits,0,sizeof perfSubmits);memset(perfVertices,0,sizeof perfVertices);
+    memset(perfArraySubmits,0,sizeof perfArraySubmits);
 }
 static uint64_t hashBytes(uint64_t h,const void *data,size_t size) {
     const unsigned char *p=data;
@@ -105,6 +108,10 @@ static uint64_t hashBytes(uint64_t h,const void *data,size_t size) {
 }
 void VR_TraceBatch(unsigned vertices) {
     if(perfEnabled && modeRace){int slot=eye<0?0:eye+1;perfSubmits[slot]++;perfVertices[slot]+=vertices;}
+}
+void VR_TraceArrayBatch(unsigned vertices) {
+    VR_TraceBatch(vertices);
+    if(perfEnabled && modeRace)perfArraySubmits[eye<0?0:eye+1]++;
 }
 void VR_TraceDraw(const RenderVertex *v,int count,const void *state,size_t size) {
     if(perfEnabled && modeRace){int slot=eye<0?0:eye+1;perfDraws[slot]++;if(perfWeatherActive)perfWeatherDraws[slot]++;}
@@ -251,6 +258,9 @@ int VR_Init(void) {
     fprintf(stderr,"[vr] paired_race_completion=%d (SONICR_VR_PAIRED_COMPLETE=0 disables)\n",pairedComplete);
     batching=!(getenv("SONICR_VR_BATCH") && !strcmp(getenv("SONICR_VR_BATCH"),"0"));
     R_SetVRBatching(batching);
+    clientArrays=!(getenv("SONICR_VR_CLIENT_ARRAYS") && !strcmp(getenv("SONICR_VR_CLIENT_ARRAYS"),"0"));
+    R_SetVRClientArrays(clientArrays);
+    fprintf(stderr,"[vr] eye_client_arrays=%d (SONICR_VR_CLIENT_ARRAYS=0 disables)\n",clientArrays);
     earlyFlushDraws=(unsigned)setting("SONICR_VR_EARLY_FLUSH_DRAWS",2048,0,1000000);
     R_SetVREarlyFlush(0);
     fprintf(stderr,"[vr] early_flush_draws=%u (0 disables; at most one per race eye)\n",earlyFlushDraws);
@@ -355,6 +365,7 @@ void VR_RaceStart(void) {
     memset(perfMs,0,sizeof perfMs);memset(perfWeatherMs,0,sizeof perfWeatherMs);
     memset(perfDraws,0,sizeof perfDraws);memset(perfWeatherDraws,0,sizeof perfWeatherDraws);
     memset(perfSubmits,0,sizeof perfSubmits);memset(perfVertices,0,sizeof perfVertices);
+    memset(perfArraySubmits,0,sizeof perfArraySubmits);
     if(VR_AutoRace()) {
         /* Start at the actual race camera; the deterministic test needs neither
          * title/demo timers nor the flyover spline. Game data is read normally. */
@@ -593,7 +604,14 @@ float VR_LerpWorldDepth(float a,float b,float t) {
     float da=vr_depth_map(a,depthNear),db=vr_depth_map(b,depthNear);
     return vr_depth_unmap(da+(db-da)*t,depthNear);
 }
-void VR_EmitVertex(const RenderVertex *v) {
+/* Shared arithmetic for immediate and buffered submission. Force only this
+ * small wrapper inline so the default emitter gains no extra function call. */
+#if defined(__GNUC__) || defined(__clang__)
+static inline __attribute__((always_inline))
+#else
+static inline
+#endif
+void transformVertex(const RenderVertex *v,float out[4]) {
     float w=v->rhw>0?1/v->rhw:1,x=v->sx,y=v->sy,z=v->sz;
     if(!identity && layer==0) {
         if(depthReversed)z=vr_depth_map(z,depthNear);
@@ -618,7 +636,14 @@ void VR_EmitVertex(const RenderVertex *v) {
         x=(nx+1)*320;y=(1-ny)*240;
     }
     if(depthReversed && layer!=0)z=1-z;
-    glVertex4f(x*w,y*w,z*w,w);
+    out[0]=x*w;out[1]=y*w;out[2]=z*w;out[3]=w;
+}
+void VR_TransformVertex(const RenderVertex *v,float out[4]) {
+    transformVertex(v,out);
+}
+void VR_EmitVertex(const RenderVertex *v) {
+    float out[4];transformVertex(v,out);
+    glVertex4f(out[0],out[1],out[2],out[3]);
 }
 int VR_Present(void) {
     if(!initialized)return 0;

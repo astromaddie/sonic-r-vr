@@ -9,6 +9,7 @@
 int g_farClipTimes8;
 static int depthScale=1;
 
+static uint64_t streamHash;
 static unsigned oldLeaks,newLeaks,samples,nearCases,xywChecks;
 static float projectedZ(const Output *v){
  /* Float GL Z transform/divide; the interpolated sample is stored as the
@@ -71,6 +72,7 @@ static uint64_t geometryHash(int includeDepth){
   }
   h=hashBytes(h,&v,sizeof v);
  }
+ streamHash=hashBytes(streamHash,&h,sizeof h);
  return h;
 }
 static void terrainTest(void){
@@ -82,7 +84,7 @@ static void terrainTest(void){
   for(int pass=0;pass<4;pass++){
    int e=order[pass],camera=(frame-10)*4*depthScale+(e?4:-4);uint64_t baseline=0;
    for(int enabled=0;enabled<2;enabled++){
-    initDepth(enabled,e);surface(camera,tilt,clip);unsigned roadEnd=eventCount;
+    initDepth(enabled,e);surface(camera,tilt,clip);R_EndBatch();unsigned roadEnd=eventCount;
     for(int z=1200*depthScale;z<5800*depthScale;z+=200*depthScale){
      unsigned start=eventCount;terrain(camera,tilt,z);R_EndBatch();
      /* Interior point projected by the same exact asymmetric-eye mapping. */
@@ -105,7 +107,7 @@ static void terrainTest(void){
 static void shadowTest(void){
  unsigned checks=0;
  for(int f=0;f<21;f++)for(int e=0;e<2;e++){
-  initDepth(1,e);int cam=(f-10)*4+(e?4:-4);surface(cam,0,0);unsigned end=eventCount;
+  initDepth(1,e);int cam=(f-10)*4+(e?4:-4);surface(cam,0,0);R_EndBatch();unsigned end=eventCount;
   g_camIntX=cam;g_camIntY=200;g_camIntZ=0;
   memset(g_viewMtx,0,sizeof(int)*16);g_viewMtx[0]=g_viewMtx[5]=g_viewMtx[10]=4096;
   int corners[12]={-30,0,5030,30,0,5030,30,0,4970,-30,0,4970};
@@ -200,4 +202,13 @@ static void lifecycleTest(void){
  assert(!memcmp(nativeProjection,gpu.projection,sizeof nativeProjection));
  puts("world depth lifecycle: D24 identity/menu, same-size32F reallocation, zero-to-one projection, GEQUAL/GREATER/ALWAYS, clears, layers, release and abandoned-target shutdown restoration passed");
 }
-int main(void){terrainTest();shadowTest();gridNearTest();rangeAndClipTest();lifecycleTest();return 0;}
+int main(void){
+ uint64_t immediateHash=0;
+ for(fixtureArrays=0;fixtureArrays<2;fixtureArrays++){
+  streamHash=1469598103934665603ULL;oldLeaks=newLeaks=samples=nearCases=xywChecks=0;
+  terrainTest();shadowTest();gridNearTest();rangeAndClipTest();lifecycleTest();
+  if(!fixtureArrays)immediateHash=streamHash;else assert(streamHash==immediateHash);
+  printf("world depth backend client_arrays=%d passed\n",fixtureArrays);
+ }
+ return 0;
+}

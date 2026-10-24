@@ -661,3 +661,30 @@ recording cannot overwrite this private copy. The performance log includes
 `tests/vr/run-replay-fixture.sh` tests the production parser, startup gates,
 configuration and input/reset lifecycle. Optional `SONICR_TEST_DEMO` points to
 an owned file for additional parser verification; no game data is committed.
+
+
+Eye client arrays are enabled by default; `SONICR_VR_CLIENT_ARRAYS=0` restores
+immediate submission. Arrays require adjacent eye batching. Each original fan is expanded in the
+same triangle order and transformed immediately into a bounded 3072-vertex
+client array of float XYZW, RGBA and UV. Compatible runs use fixed-function
+`glDrawArrays(GL_TRIANGLES)`; full storage splits only between triangles.
+Every existing state/resource/layer/camera/target barrier submits pending data.
+The early-flush 2048 logical-fan threshold and paired completion remain unchanged.
+Native, identity and direct menu rendering retain immediate mode.
+
+The desktop renderer owns array use and explicitly binds client memory (array
+buffer 0) and client texture unit 0. Each submission saves/restores client vertex
+state and restores the final current color/UV, whose values become unspecified
+after an array draw. There are no VBOs, shaders, new waits, GL queries or runtime
+readbacks. See Khronos [DrawArrays](https://registry.khronos.org/OpenGL-Refpages/gl2.1/xhtml/glDrawArrays.xml)
+and [client attribute stack](https://registry.khronos.org/OpenGL-Refpages/gl2.1/xhtml/glPushClientAttrib.xml).
+CPU tests compare exact transformed vertices, float colors, UVs and effective
+state, including overflow and immediate-mode continuation. Matched Frame GPU
+captures are byte-exact across all 26 diagnostic images and both 2160-square
+runtime-FOV moving replay eyes. Capture-free moving Resort Island comparisons
+reduce eye-command CPU time from about 3.0 to 1.7 ms. App cadence improves from
+118.25 to 119.50 FPS in clear weather, 118.50 to 119.88 in snow and 119.55 to
+119.73 in rain. These zero-layer measurements still contain missed deadlines;
+they do not establish sustained 120 Hz compositor delivery.
+The optional CPU performance log includes actual `gl_array_submits` per pass,
+separately from total submissions, so runtime A/B can prove the path was active.
