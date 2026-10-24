@@ -636,14 +636,14 @@ void RenderHUD(void)
         ComputeParallaxAndPlayfieldState(vp, g_currentRenderCam);
 
 #if SONICR_VR
-        VR_SkyBegin();
+        VR_TraceStage(4);VR_SkyBegin();
 #endif
         RenderParallaxStripsD3D((int)vp);
         if (g_trackId != TRACK_RADIANT_EMERALD) {
             RenderWaterReflectionD3D((int)vp);
         }
 #if SONICR_VR
-        VR_SkyEnd();
+        VR_SkyEnd();VR_TraceStage(0);
 #endif
 
         if (g_trackId != TRACK_RADIANT_EMERALD) {
@@ -654,7 +654,13 @@ void RenderHUD(void)
 #if SONICR_VR
                 if (VR_EyeActive()) vpCfg = g_currentRenderCam;
 #endif
+#if SONICR_VR
+                VR_TraceStage(1);
+#endif
                 RenderPlayfieldGridD3D(skyBase, skyUpper, vpCfg);
+#if SONICR_VR
+                VR_TraceStage(0);
+#endif
             }
         }
 
@@ -679,7 +685,13 @@ void RenderHUD(void)
 //SONICR_DC
         R_SetFilter(R_FILTER_LINEAR);
 #endif
+#if SONICR_VR
+        VR_TraceStage(2);
+#endif
         RenderTrackD3D();
+#if SONICR_VR
+        VR_TraceStage(0);
+#endif
 #ifdef BLURRY
 //SONICR_DC
         R_SetFilter(R_FILTER_NEAREST);
@@ -712,7 +724,7 @@ void RenderHUD(void)
 #if SONICR_VR
         if (VR_EyeActive()) {
             SetViewportFromConfig(g_viewportArray + vp * 21);
-            VR_Layer(1);
+            VR_HudBegin();
             if (g_demoMode == DEMO_NONE) DrawTimerAndStatus((g_isNetworkGame != 0) ? g_localPlayerIndex : (int)vp);
         }
 #endif
@@ -730,6 +742,9 @@ void RenderHUD(void)
                 -2816);                             /* zNearBias */
         }
 
+#if SONICR_VR
+        if (VR_EyeActive()) VR_HudEnd();
+#endif
         if (g_numHumans > 1) {
             R_DisableScissor();
             R_FlushState();
@@ -776,9 +791,12 @@ void RenderHUD(void)
     }
 
 #if SONICR_VR
-    VR_Layer(1);
+    VR_HudBegin();
 #endif
     DrawPauseOverlay();
+#if SONICR_VR
+    VR_HudEnd();
+#endif
 
     /* Fade iris — 0x4cd48e: cmp [0x901c44], 0 / jge */
     if (g_fadeLevel < 0) {

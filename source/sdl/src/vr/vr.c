@@ -14,6 +14,7 @@
 #include "sonicr_functions.h"
 #include "platform.h"
 #include "r_state.h"
+#include "r_draw.h"
 #include "pad_bits.h"
 #include "sonicr_paths.h"
 #include "fileio.h"
@@ -24,6 +25,9 @@
 static int initialized,diagnostic,eye=-1,repeat,layer,identity,presented,mirrorDirty;
 static int ticks,frames,extraPasses,dumpTick=90,autoRace,drive,runtimeDump;
 static int traceDraw,stereoCheck;
+static int fixturePose,fixturePauseTick,streamStage,streamTick;
+static const char *streamPath;
+static FILE *streamFile;
 static int fixtureReplay;
 static unsigned short *replayPads;
 static unsigned replayCount,replayIndex;
@@ -41,6 +45,9 @@ static GLuint framebuffer,depth[2],diagTexture[2],menuTexture;
 static int depthW[2],depthH[2];
 static int previous[50],current[50],eyeCamera[50],haveCamera;
 static float roll,rollCos=1,rollSin;
+static float skyBasis[9];
+static int hudDepthStarted;
+static int trackFloat=1,hudDepth=1,skyRotation=1;
 static VRProjection eyeProjection;
 static VRVec hudCenter;
 static VRQuat hudOrientation,eyeInverse;
@@ -113,8 +120,20 @@ void VR_TraceArrayBatch(unsigned vertices) {
     VR_TraceBatch(vertices);
     if(perfEnabled && modeRace)perfArraySubmits[eye<0?0:eye+1]++;
 }
+void VR_TraceStage(int stage) { streamStage=stage; }
 void VR_TraceDraw(const RenderVertex *v,int count,const void *state,size_t size) {
     if(perfEnabled && modeRace){int slot=eye<0?0:eye+1;perfDraws[slot]++;if(perfWeatherActive)perfWeatherDraws[slot]++;}
+    if(streamFile) {
+        fprintf(streamFile,"{\"frame\":%d,\"tick\":%d,\"eye\":%d,\"layer\":%d,\"stage\":%d,\"reverse\":%d,\"paused\":%d,\"identity\":%d,\"repeat\":%d,\"state\":\"",frames,streamTick,eye,layer,streamStage,depthReversed,g_isPaused,identity,repeat);
+        for(size_t j=0;j<size;j++)fprintf(streamFile,"%02x",((const unsigned char *)state)[j]);
+        fputs("\",\"vertices\":[",streamFile);
+        for(int i=0;i<count;i++) {
+            float o[4],w=v[i].rhw>0?1/v[i].rhw:1;
+            if(eye>=0)VR_TransformVertex(v+i,o);else{o[0]=v[i].sx*w;o[1]=v[i].sy*w;o[2]=v[i].sz*w;o[3]=w;}
+            fprintf(streamFile,"%s[%.9g,%.9g,%.9g,%.9g,%u,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]",i?",":"",v[i].sx,v[i].sy,v[i].sz,v[i].rhw,v[i].color,v[i].u,v[i].v,o[0],o[1],o[2],o[3]);
+        }
+        fputs("]}\n",streamFile);
+    }
     if(!traceDraw)return;
     drawHash=hashBytes(drawHash,&count,sizeof(count));
     drawHash=hashBytes(drawHash,state,size);
@@ -190,7 +209,13 @@ static uint64_t imageFingerprint(int e) {
     free(pixels);return hash;
 }
 int VR_Diagnostic(void) { return diagnostic; }
-unsigned short VR_PadBits(void) { return vr_input_read(g_joystickConfigWords); }
+unsigned short VR_PadBits(void) {
+    unsigned short bits=vr_input_read(g_joystickConfigWords);
+    /* Feed the real native ReadInput -> UpdatePerPlayerInput pause gate.
+     * The later replay/drive hook runs after that gate and cannot enter pause. */
+    if(modeRace && fixturePauseTick && ticks==fixturePauseTick)bits|=PAD_START;
+    return bits;
+}
 int VR_AutoRace(void) { return diagnostic || autoRace; }
 static void resetReplay(void) {
     free(replayPads);replayPads=NULL;replayCount=replayIndex=0;
@@ -230,6 +255,8 @@ void VR_DiagnosticInput(void) {
     if(diagnostic && drive)g_perPlayerInput[0]|=PAD_ACCEL;
 }
 int VR_DepthReversed(void) { return depthReversed; }
+int VR_TrackFloat(void) { return trackFloat && VR_EyeActive(); }
+int VR_SkyRotation(void) { return skyRotation && VR_EyeActive(); }
 int VR_EyeActive(void) { return eye>=0 && !identity; }
 int VR_Repeat(void) { return repeat; }
 void VR_Layer(int value) { if(layer!=value)R_EndBatch();layer=value; }
@@ -252,6 +279,10 @@ void VR_ConfigureAutoRace(void) {
     fprintf(stderr,"[vr] fixture track=%d weather_config=%d requested_tod=%d race_type=%d\n",g_trackId,g_weatherConfig,g_timeOfDay+1,g_raceType);
 }
 int VR_Init(void) {
+    trackFloat=!(getenv("SONICR_VR_TRACK_FLOAT") && !strcmp(getenv("SONICR_VR_TRACK_FLOAT"),"0"));
+    hudDepth=!(getenv("SONICR_VR_HUD_DEPTH") && !strcmp(getenv("SONICR_VR_HUD_DEPTH"),"0"));
+    skyRotation=!(getenv("SONICR_VR_SKY_ROTATION") && !strcmp(getenv("SONICR_VR_SKY_ROTATION"),"0"));
+    fprintf(stderr,"[vr] pose_correction track_float=%d hud_depth=%d sky_rotation=%d\n",trackFloat,hudDepth,skyRotation);
     perspectiveDepth=!(getenv("SONICR_VR_DEPTH") && !strcmp(getenv("SONICR_VR_DEPTH"),"0"));
     fprintf(stderr,"[vr] perspective_world_depth=%d (SONICR_VR_DEPTH=0 disables)\n",perspectiveDepth);
     pairedComplete=!(getenv("SONICR_VR_PAIRED_COMPLETE") && !strcmp(getenv("SONICR_VR_PAIRED_COMPLETE"),"0"));
@@ -276,6 +307,13 @@ int VR_Init(void) {
     if(offhead && (diagnostic || !autoRace || !runSeconds))die("OFFHEAD_RENDER requires runtime AUTORACE=1 and RUN_SECONDS=1..300");
     int neutral=getenv("SONICR_VR_OFFHEAD_NEUTRAL") && !strcmp(getenv("SONICR_VR_OFFHEAD_NEUTRAL"),"1");
     if(neutral && !offhead)die("OFFHEAD_NEUTRAL requires bounded runtime OFFHEAD_RENDER");
+    fixturePose=getenv("SONICR_VR_FIXTURE_POSE") && !strcmp(getenv("SONICR_VR_FIXTURE_POSE"),"1");
+    if(fixturePose && !(diagnostic || (offhead && neutral)))die("FIXTURE_POSE requires DIAGNOSTIC or bounded OFFHEAD_NEUTRAL");
+    fixturePauseTick=(int)setting("SONICR_VR_FIXTURE_PAUSE_TICK",0,1,900);
+    if(fixturePauseTick && !fixturePose)die("FIXTURE_PAUSE_TICK requires FIXTURE_POSE");
+    streamPath=getenv("SONICR_VR_DUMP_STREAM");
+    if(streamPath && !(diagnostic || offhead))die("DUMP_STREAM requires DIAGNOSTIC or bounded OFFHEAD_RENDER");
+    if(fixturePose)fprintf(stderr,"[vr-diag] fixture_pose=combined-yaw-pitch-roll canted=1 forced=1 tick_locked=1 chase_alpha=1 layers=0 pause_tick=%d\n",fixturePauseTick);
     fixtureReplay=getenv("SONICR_VR_FIXTURE_REPLAY") && !strcmp(getenv("SONICR_VR_FIXTURE_REPLAY"),"1");
     if(fixtureReplay && !offhead)die("FIXTURE_REPLAY requires bounded runtime OFFHEAD_RENDER and AUTORACE");
     vr_xr_deadline(runSeconds,offhead,neutral);
@@ -312,6 +350,7 @@ void VR_Shutdown(void) {
     R_SetVREarlyFlush(0);
     setDepthMode(0);
     resetReplay();fixtureReplay=0;
+    if(streamFile){fclose(streamFile);streamFile=NULL;}
     initialized=0;
     fprintf(stderr,"[vr] shutdown race_ticks=%d race_display_frames=%d stereo_passes=%d diagnostic=%d\n",ticks,frames,frames*2+extraPasses,diagnostic);
     if(!diagnostic)vr_xr_shutdown();
@@ -332,6 +371,11 @@ static int begin(void) {
         }
         visible=1;
     } else visible=vr_xr_begin(eyes,&displayTime);
+    if(visible==1 && fixturePose && modeRace) {
+        float t=ticks/30.0f,y=.8f*sinf(t*.9f),p=.45f*sinf(t*.7f),r=.45f*sinf(t*1.1f);
+        VRQuat q=vr_mul(vr_mul((VRQuat){0,sinf(y/2),0,cosf(y/2)},(VRQuat){sinf(p/2),0,0,cosf(p/2)}),(VRQuat){0,0,sinf(r/2),cosf(r/2)});
+        for(int e=0;e<2;e++)eyes[e].pose=(VRPose){vr_mul(q,(VRQuat){0,sinf((e?1:-1)*.015f),0,cosf(.015f)}),vr_rotate(q,(VRVec){e?.032f:-.032f,0,0})};
+    }
     int focused=diagnostic || vr_xr_focused();
     if(focused && !wasFocused){anchored=0;haveCamera=0;focusSince=0;}
     wasFocused=focused;
@@ -403,7 +447,7 @@ static void setDepthMode(int enabled) {
 }
 static void target(int e) {
     R_EndBatch();
-    eye=e;cacheEyeProjection();R_ResetState();
+    eye=e;cacheEyeProjection();R_ResetState();hudDepthStarted=0;
     R_SetVREarlyFlush(modeRace && !identity ? earlyFlushDraws : 0);
     setDepthMode(perspectiveDepth && modeRace && !identity);
     depthNear=vr_depth_near(g_farClipFloat);
@@ -465,6 +509,10 @@ void VR_RenderRace(int tick) {
     if(tick)perfAdd(1,perfSimStart);
     double stageStart=perfNow();
     int *native=(int*)((char*)g_viewportConfigArray+cameraSlot()*0xC8);
+    if(streamPath && tick && ticks+1==dumpTick) {
+        streamFile=fopen(streamPath,"w");if(!streamFile)die("DUMP_STREAM open");streamTick=ticks+1;
+        for(int e=0;e<2;e++)fprintf(streamFile,"{\"view\":%d,\"fov\":[%.9g,%.9g,%.9g,%.9g],\"pose\":[%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]}\n",e,eyes[e].fov.left,eyes[e].fov.right,eyes[e].fov.up,eyes[e].fov.down,eyes[e].pose.q.x,eyes[e].pose.q.y,eyes[e].pose.q.z,eyes[e].pose.q.w,eyes[e].pose.p.x,eyes[e].pose.p.y,eyes[e].pose.p.z);
+    }
     if(tick) {
         memcpy(previous,current,sizeof(current));memcpy(current,native,sizeof(current));
         if(!haveCamera)memcpy(previous,current,sizeof(current));haveCamera=1;
@@ -536,6 +584,7 @@ void VR_RenderRace(int tick) {
     g_currentRenderCam=native;SetViewportFromConfig(g_viewportArray+cameraSlot()*21);SetViewportClipRect(native);
     stageStart=perfNow();if(!diagnostic)vr_xr_end(1);perfAdd(6,stageStart);
     presented=1;
+    if(streamFile){if(fclose(streamFile))die("DUMP_STREAM write");streamFile=NULL;}
     if(dump) {
         fprintf(stderr,"[vr-diag] complete ticks=%d display_frames=%d stereo_passes=%d yaw=%.1f roll=%.1f units_per_metre=%.3f synthetic=%d repeat_state=%s\n",ticks,frames,frames*2+extraPasses,diagYaw/0.01745329251994f,diagRoll/0.01745329251994f,units,diagnostic,diagnostic?"unchanged":"unchecked");
         exit(0);
@@ -547,7 +596,7 @@ void VR_ApplyCamera(int **camera) {
     depthNear=vr_depth_near(g_farClipFloat);
     memcpy(eyeCamera,current,sizeof(eyeCamera));
     RenderCamera *rc=(RenderCamera*)eyeCamera,*a=(RenderCamera*)previous,*b=(RenderCamera*)current;
-    float t=clockState.alpha;
+    float t=fixturePose?1:clockState.alpha;
     if(diagnostic && eye==0 && (ticks==1 || ticks%30==0))
         fprintf(stderr,"[vr-diag] presentation tick=%d frame=%d alpha=%.6f chase=(%.3f,%.3f,%.3f) previous=(%.3f,%.3f,%.3f) current=(%.3f,%.3f,%.3f)\n",
             ticks,frames,t,a->camFloatX+(b->camFloatX-a->camFloatX)*t,a->camFloatY+(b->camFloatY-a->camFloatY)*t,a->camFloatZ+(b->camFloatZ-a->camFloatZ)*t,
@@ -573,6 +622,7 @@ void VR_ApplyCamera(int **camera) {
     float headBasis[9],composed[9];
     vr_compose_basis(base,anchorRotation,headBasis);
     vr_compose_basis(headBasis,eyes[eye].pose.q,composed);
+    memcpy(skyBasis,composed,sizeof skyBasis);
     int *im=eyeCamera+0x12;float *fm=(float*)(eyeCamera+0x22);
     for(int r=0;r<3;r++)for(int c=0;c<3;c++){fm[r*4+c]=composed[r*3+c];im[r*4+c]=(int)lrintf(composed[r*3+c]*4096);}
     /* Sky scroll uses historical swapped pitch/yaw fields; derive from the
@@ -592,6 +642,66 @@ void VR_ApplyCamera(int **camera) {
     g_projScaleY=(int)floorf(480/(u-d));
     g_screenCenterX=(int)lrintf(-l*640/(r-l));g_screenCenterY=(int)lrintf(u*480/(u-d));
     g_clipLeft=0;g_clipTop=0;g_clipRight=639;g_clipBottom=479;
+    if(streamFile) {
+        fprintf(streamFile,"{\"camera\":%d,\"origin\":[%.9g,%.9g,%.9g],\"far\":%.9g,\"alpha\":%.9g,\"basis\":[",eye,rc->camFloatX,rc->camFloatY,rc->camFloatZ,g_farClipFloat,t);
+        for(int i=0;i<9;i++)fprintf(streamFile,"%s%.9g",i?",":"",composed[i]);
+        fputs("]}\n",streamFile);
+    }
+}
+void VR_HudBegin(void) {
+    if(!VR_EyeActive() || !modeRace)return;
+    VR_Layer(1);VR_TraceStage(3);
+    if(!hudDepth)return;
+    R_PushState();
+    R_SetDepthTest(1);R_SetDepthWrite(1);R_SetDepthFunc(R_DEPTH_LEQUAL);
+    if(!hudDepthStarted){R_ClearDepth();hudDepthStarted=1;}
+}
+void VR_HudEnd(void) {
+    if(!VR_EyeActive() || !modeRace)return;
+    if(hudDepth)R_PopState();VR_Layer(0);VR_TraceStage(0);
+}
+int VR_DrawPanorama(int tpage,float phase,float horizon) {
+    if(!VR_EyeActive())return 0;
+    /* Same six full atlas strips and final half strip as the native renderer.
+     * A complete cylinder supplies rotation-independent directions; its upper
+     * edge continues to the zenith with the native cap texel at atlas (0,0).
+     * Cache only authored geometry, never an eye's transformed vertices. */
+    static RenderVertex mesh[52][7];
+    static float savedPhase,savedHorizon;
+    static int valid,savedMirror;
+    if(!valid || phase!=savedPhase || horizon!=savedHorizon || savedMirror!=g_mirrorMode) {
+        const float uPair[14]={0,.5f,.5f,1,0,.5f,.5f,1,0,.5f,.5f,1,0,.25f};
+        const float vBase[7]={0,0,.25f,.25f,.5f,.5f,.75f};
+        int n=0;
+        for(int strip=0;strip<7;strip++) {
+            int pieces=strip==6?4:8;
+            for(int part=0;part<pieces;part++,n++) {
+                float a=(strip*256+part*32-phase)*(6.28318530718f/1664);
+                int end=strip*256+(part+1)*32;
+                float b=((end==1664?0:end)-phase)*(6.28318530718f/1664);
+                if(g_mirrorMode){a=-a;b=-b;}
+                float u0=uPair[strip*2]+(uPair[strip*2+1]-uPair[strip*2])*part/pieces;
+                float u1=uPair[strip*2]+(uPair[strip*2+1]-uPair[strip*2])*(part+1)/pieces;
+                float vt=vBase[strip]+1.0f/256,vb=vBase[strip]+.25f-1.0f/256;
+                float ax=sinf(a),az=cosf(a),bx=sinf(b),bz=cosf(b);
+                mesh[n][0]=(RenderVertex){ax,horizon,az,1,VERTEX_WHITE,0,u0,vb};
+                mesh[n][1]=(RenderVertex){bx,horizon,bz,1,VERTEX_WHITE,0,u1,vb};
+                mesh[n][2]=(RenderVertex){bx,horizon+.5f,bz,1,VERTEX_WHITE,0,u1,vt};
+                mesh[n][3]=(RenderVertex){ax,horizon+.5f,az,1,VERTEX_WHITE,0,u0,vt};
+                mesh[n][4]=mesh[n][3];mesh[n][5]=mesh[n][2];
+                mesh[n][4].u=mesh[n][4].v=mesh[n][5].u=mesh[n][5].v=0;
+                mesh[n][6]=(RenderVertex){0,1,0,1,VERTEX_WHITE,0,0,0};
+            }
+        }
+        savedPhase=phase;savedHorizon=horizon;savedMirror=g_mirrorMode;valid=1;
+    }
+    int oldLayer=layer;
+    R_PushState();VR_Layer(4);
+    R_SetTexture(tpage);R_SetFilter(R_FILTER_NEAREST);
+    R_SetDepthTest(0);R_SetDepthWrite(0);R_SetBlendMode(R_BLEND_NONE);R_SetTexEnv(R_TEXENV_MODULATE);
+    for(int i=0;i<52;i++){R_DrawQuad(mesh[i]);R_DrawTri(mesh[i]+4);}
+    R_PopState();VR_Layer(oldLayer);
+    return 1;
 }
 void VR_SkyBegin(void) { VR_Layer(2); }
 void VR_SkyEnd(void) { VR_Layer(0); }
@@ -613,6 +723,19 @@ static inline
 #endif
 void transformVertex(const RenderVertex *v,float out[4]) {
     float w=v->rhw>0?1/v->rhw:1,x=v->sx,y=v->sy,z=v->sz;
+    if(!identity && layer==4) {
+        /* Panorama vertices are world directions. Project homogeneous rays,
+         * including rays behind/alongside the eye: GL clips triangles across
+         * w=0, without a CPU divide or a finite-distance sky parallax. */
+        float cx=v->sx*skyBasis[0]+v->sy*skyBasis[3]+v->sz*skyBasis[6];
+        float cy=v->sx*skyBasis[1]+v->sy*skyBasis[4]+v->sz*skyBasis[7];
+        w=v->sx*skyBasis[2]+v->sy*skyBasis[5]+v->sz*skyBasis[8];
+        float l=eyeProjection.left,r=eyeProjection.right,u=eyeProjection.up,d=eyeProjection.down;
+        out[0]=(2*cx/(r-l)+w*(1-(r+l)/(r-l)))*320;
+        out[1]=(-2*cy/(u-d)+w*(1+(u+d)/(u-d)))*240;
+        out[2]=(depthReversed?1-.999988675117f:.999988675117f)*w;out[3]=w;
+        return;
+    }
     if(!identity && layer==0) {
         if(depthReversed)z=vr_depth_map(z,depthNear);
         VRVec p={(x-g_screenCenterX)*w/g_projScaleXCurrent,(g_screenCenterY-y)*w/g_projScaleY,-w};
@@ -623,7 +746,7 @@ void transformVertex(const RenderVertex *v,float out[4]) {
         VRVec p={(x-320)/400,(240-y)/400,-2};
         p=vr_sub(vr_add(hudCenter,vr_rotate(hudOrientation,p)),eyes[eye].pose.p);
         p=vr_rotate(eyeInverse,p);
-        float nx,ny;vr_project_cached(p,eyeProjection,&nx,&ny);x=(nx+1)*320;y=(1-ny)*240;w=-p.z;z=0;
+        float nx,ny;vr_project_cached(p,eyeProjection,&nx,&ny);x=(nx+1)*320;y=(1-ny)*240;w=-p.z;z=modeRace && hudDepth?.25f+.5f*z:0;
     } else if(!identity && layer==2) {
         /* Native panorama already uses eye yaw/pitch. Rotate its angular
          * plane for roll, then use the same exact asymmetric FOV correction

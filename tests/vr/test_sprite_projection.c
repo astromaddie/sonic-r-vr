@@ -21,6 +21,10 @@ float g_uvLUT256[256];
 static int active=1, count;
 static RenderVertex draws[2048][4];
 int VR_EyeActive(void) { return active; }
+/* This historical regression retains the shared 2D water/legacy-sky branch.
+ * Full rotation-only sky production coverage lives in run-pose-render.sh. */
+int VR_SkyRotation(void) { return 0; }
+int VR_DrawPanorama(int t,float p,float h) {(void)t;(void)p;(void)h;assert(0);return 0;}
 void R_SetTexEnv(R_TexEnvMode m) {(void)m;}
 void R_SetTexture(int t) {(void)t;}
 void R_SetFilter(R_FilterMode f) {(void)f;}

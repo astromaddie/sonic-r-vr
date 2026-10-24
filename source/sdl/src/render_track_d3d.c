@@ -242,6 +242,28 @@ static void EmitSkyWaterQuad(const RenderVertex q[4])
  */
 void RenderParallaxStripsD3D(int vpIdx)
 {
+#if SONICR_VR
+    if(VR_SkyRotation()) {
+        /* Keep the native atlas orientation at neutral gaze, including its
+         * historical one-strip optical-axis offset. The world directions are
+         * fixed; neither Euler head angles nor eye translation enter here. */
+        int offset=0;
+        switch(g_trackId) {
+            case TRACK_RESORT_ISLAND: offset=0x60;break;
+            case TRACK_RADICAL_CITY: offset=0x46;break;
+            case TRACK_REGAL_RUIN: offset=0x6f;break;
+            case TRACK_REACTIVE_FACTORY: offset=0x66;break;
+            case TRACK_RADIANT_EMERALD: offset=0x4d;break;
+        }
+        float scroll=(g_parallaxWidth*offset)/256;
+        float phase=g_mirrorMode?g_parallaxWidth*.5f-scroll: g_parallaxWidth-1+scroll;
+        float focal=g_viewportArray[vpIdx*21+6];
+        float horizon=g_trackId==TRACK_RADIANT_EMERALD && focal>0? -g_parallaxExtraX/(2*focal):0;
+        if(g_tpageStateArray[g_tpageCount]==4 || g_tpageStateArray[g_tpageCount]==6)
+            VR_DrawPanorama(g_tpageCount,phase+256,horizon);
+        return;
+    }
+#endif
     /* ROM UV tables — verified from 0x004fc4ec and 0x004fc524 */
     static const float uvPairs[14] = {
         0.0f, 0.5f,  0.5f, 1.0f,  0.0f, 0.5f,  0.5f, 1.0f,

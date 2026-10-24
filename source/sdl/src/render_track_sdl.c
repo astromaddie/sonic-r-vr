@@ -24,6 +24,10 @@
 #include "r_draw.h"
 #include "nearclip.h"
 #include "render_track_internal.h"
+#include "vr/vr.h"
+#if SONICR_VR
+#include "vr/vr_track.h"
+#endif
 
 extern void RenderHiddenSubEntry(int worldX, int worldZ, int worldY);
 
@@ -295,6 +299,9 @@ void RenderTrackD3D(void)
     int remaining = g_totalObjects;   /* 0x6EAD30 */
     int *obj = (int *)g_objectStructArray;  /* 0x712D44 */
     float farClipF = g_farClipFloat;  /* 0x8FB364 */
+#if SONICR_VR
+    const int floatEye = VR_TrackFloat();
+#endif
 
     if (remaining <= 0) {
         return;
@@ -340,6 +347,13 @@ void RenderTrackD3D(void)
             dz = obj[2] - g_camIntZ;
         }
 
+#if SONICR_VR
+        if(floatEye) {
+            float ox=mode==2?obj[8]:obj[0],oy=mode==2?obj[9]:obj[1],oz=mode==2?obj[10]:obj[2];
+            if(!VRTrackVisible(ox,oy,oz,visFlag,farClipThresh*8.0f))goto next_object;
+            goto transform_vertices;
+        }
+#endif
         /* Camera-space Z (depth) of object origin
          * cz = (dx * m02 + dy * m12 + dz * m22) / 4096 */
         int cz = (dx * g_viewMtx02 + dy * g_viewMtx12 + dz * g_viewMtx22) / 4096;
@@ -391,6 +405,7 @@ void RenderTrackD3D(void)
             goto next_object;
         }
 
+transform_vertices:;
         /* Get vertex base pointer */
         unsigned int vtxStartIdx = *(unsigned short *)((char *)obj + 0x38);
         SrcVertex *vtxBase = &g_vertexArrayBase[vtxStartIdx];
@@ -456,6 +471,9 @@ void RenderTrackD3D(void)
                 int r1 = (L10 * vx + L11 * vy + L12 * vz) >> 12;
                 int r2 = (L20 * vx + L21 * vy + L22 * vz) >> 12;
 
+#if SONICR_VR
+                if(floatEye) {VRTrackTransform(vtx,r0+pivX,r1+pivY,r2+pivZ);vtx++;continue;}
+#endif
                 /* Rotated vertex + pivot - camera (0x45393A-0x453973) */
                 int dx = r0 + pivX - g_camIntX;
                 int dy = r1 + pivY - g_camIntY;
@@ -487,6 +505,9 @@ void RenderTrackD3D(void)
              * (optimization: m10 is typically 0 for non-banked cameras). */
             SrcVertex *vtx = vtxBase;
             for (unsigned int vi = 0; vi < vertCount; vi++) {
+#if SONICR_VR
+                if(floatEye) {VRTrackTransform(vtx,vtx->posX,vtx->posY,vtx->posZ);vtx++;continue;}
+#endif
                 int vdx = vtx->posX - g_camIntX;
                 int vdy = vtx->posY - g_camIntY;
                 int vdz = vtx->posZ - g_camIntZ;
@@ -539,6 +560,9 @@ void RenderTrackD3D(void)
                 goto next_poly;
             }
 
+#if SONICR_VR
+            if(floatEye) {VRTrackDraw(polyPtr,farClipF>0?farClipF:88064.0f,farClipTimes8);goto next_poly;}
+#endif
             /* Get vertex pointers (absolute indices from polygon struct) */
             SrcVertex *pv0 = &g_vertexArrayBase[*(unsigned short *)(pp + 0x20)];
             SrcVertex *pv1 = &g_vertexArrayBase[*(unsigned short *)(pp + 0x22)];

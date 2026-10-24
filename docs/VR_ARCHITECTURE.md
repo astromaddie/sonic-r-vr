@@ -58,26 +58,31 @@ remain. The race-eye world-depth correction below changes depth interpolation.
 
 | Production path | VR rule |
 |---|---|
-| `RenderTrackD3D` object bounds, vertices, near clip and backfaces | Rerun with the eye camera before culling; existing mirror winding retained |
+| `RenderTrackD3D` object bounds, vertices, near clip and backfaces | Eye-only floating camera/clip scratch shares the full grid basis, including camera-X height; native local object rotations, fan order, UV/color/fog and mirror rules retained |
 | `RenderAllCharacterModels`, limbs, balloons, rings and boxes | Recompute camera-space geometry per eye; animation phases remain tick-owned |
 | `RenderPlayfieldGridD3D`, `SkyVertexTransform` | Pass the eye camera explicitly to both float transforms and grid rendering |
 | `RenderBackground` | Full-eye clear/background; no screen-space world reprojection |
-| `ComputeParallaxAndPlayfieldState`, `RenderParallaxStripsD3D` | Native panorama scroll/horizon derived from eye yaw/pitch; anchor strips to the optical axis, rotate angular coordinates for roll and apply the exact asymmetric FOV; continue each strip's top texels into the upper cap; no eye translation at infinity |
+| `ComputeParallaxAndPlayfieldState`, `RenderParallaxStripsD3D` | Existing atlas on a closed rotation-only cylinder plus zenith cap; full composed chase/head/eye basis and asymmetric FOV, no eye translation; native cap texel, track/mirror phase and Emerald rim retained |
 | `RenderWaterReflectionD3D` | Retain the native panorama reflection/ripple as part of the distant background; no false IPD at its arbitrary screen depth |
 | `DrawCollectEffectsD3D`, item and ground particles | Eye-camera anchored billboards with fractional projected corners, native perspective size and fog |
 | Foot/pickup shadows, trails, air/water character effects | Rebuild projected geometry per eye; native world anchors and transparency retained |
 | `DrawSnowParticles` | Draw per eye; only the canonical tick render writes simulation-facing visibility |
-| Timer, status, minimap, reverse indicator, replay R, pause | Existing content on a 1.6 × 1.2 m plane at 2 m following head yaw/pitch, excluding roll, with runtime eye separation |
+| Timer, status, minimap, reverse indicator, replay R, pause | Existing content on a 1.6 × 1.2 m plane at 2 m following head yaw/pitch, excluding roll, with runtime eye separation; clear world depth once before HUD, retain native depth priority in an interior depth interval |
 | Wrong-way detection/SFX/counter decay and READY/SET/GO sounds | Canonical native render once per tick; repeat eye passes cannot advance it |
 | Native fade/iris | Full-eye overlay preserving native fade animation |
 | Logo, title, menus, results | Capture the native 4:3 viewport without drawable letterbox bars, render it as the same finite stereo panel, and refresh tracking at display cadence |
 | Desktop aspect/scissor | Normal desktop 4:3 path; eye framebuffer uses its full extent with a 640 × 480 logical canvas |
 
-The native panorama is a strip backdrop rather than a reconstructed sky dome;
-its historical pitch/horizon model remains. High roll/pitch and track-specific
-background transitions require separate visual checks. The initial stereo race
-path targets one local viewport. Split-screen behavior is not an accepted
-stereo mode.
+The panorama uses the existing six full atlas strips and final half strip on
+52 cylinder sectors, with the native atlas (0,0) cap texel extending to zenith.
+Directions are transformed by the full composed camera rotation and projected
+homogeneously, including triangles crossing eye W=0. The 1664-unit atlas closes
+one complete turn; this replaces the historical finite tangent-plane/Euler
+scroll approximation, so peripheral spacing is intentionally angular rather
+than pixel-identical. Water/reflection retains its native rendering path.
+Track-specific visual transitions and extreme head poses still require actual
+runtime review. The stereo race path targets one local viewport; split-screen
+is not an accepted stereo mode.
 
 ## Frame ownership
 
@@ -199,16 +204,15 @@ character sprites, held items and item shields. Native integer rounding on the
 640 × 480 canvas could turn a small quad into zero area in only one eye; that
 information cannot be recovered by the final FOV remap or higher eye resolution.
 Flat and canonical native passes retain the original integer projection.
-The underlying native camera-space integer transforms remain unchanged.
+The billboard camera-space integer transforms remain unchanged. Track geometry
+uses the separate eye-only floating path described below.
 
-Sky and water atlas strips share an angular origin relative to the optical
-axis. An asymmetric eye's left clipping edge must not move the panorama's
-texture directions. Preceding strips are included when needed for left-edge
-coverage. Sky emission rotates normalized angular coordinates and then applies
-the exact eye FOV, including the CPU projection's integer-rounding correction.
+The retained water/legacy-sky control anchors atlas strips to the optical axis
+and rotates angular coordinates before the exact FOV correction. The current
+sky instead uses full rotation-only directions as described in the inventory.
 
 `tests/vr/run-sprite-projection.sh` calls production ring, collect-effect,
-character/item, sky and water renderers with a recording draw boundary. It
+character/item, legacy-sky and water renderers with a recording draw boundary. It
 checks 81 animated camera samples, repeated and reversed eye order (486
 passes), noncollapsed small sprites and asymmetric-eye panorama alignment.
 `--flat` checks the canonical native path; `SONICR_TEST_VR=0` compiles the flat
@@ -284,7 +288,7 @@ not worn tracking or display-performance acceptance. No release synchronization
 or native 30 Hz simulation/input scheduling was changed.
 
 Eye projection now caches FOV tangents and HUD pose terms at every eye target;
-sky roll sine/cosine refresh with each applied game camera. The per-vertex
+legacy sky/water roll sine/cosine refresh with each applied game camera. The per-vertex
 arithmetic order, homogeneous depth/W and native/identity bypass are unchanged.
 `tests/vr/run-projection-cache.sh` compares the actual emitter and backend dispatch
 against the uncached production function extracted from `f2491a8` (identical to
@@ -688,3 +692,64 @@ reduce eye-command CPU time from about 3.0 to 1.7 ms. App cadence improves from
 they do not establish sustained 120 Hz compositor delivery.
 The optional CPU performance log includes actual `gl_array_submits` per pass,
 separately from total submissions, so runtime A/B can prove the path was active.
+
+## Pose-sensitive track, HUD and sky correction
+
+`RenderTrackD3D` formerly used the native integer camera and deliberately omitted
+`m10 * dy` from camera X. Composed head rotation violates that native assumption;
+restoring only the term still leaves fixed/float disagreement with the grid near
+the horizon. Race eyes now use separate fractional camera/near-clip scratch with
+the same float basis/origin as the grid. Native object rotation remains integer;
+object spheres use conservative float plane distances. Polygon fan roots,
+near-plane 1, far rejection, UVs, behind-vertex clip colors, fog and existing
+world depth biases remain. Canonical, identity and VR=0 retain the native path.
+
+The HUD clears depth once after world rendering, scopes depth test/write and
+LEQUAL (GEQUAL under reversed depth), and maps native HUD depth into 0.25..0.75.
+This keeps minimap icon priorities and pause text depth4 ahead of background5,
+without flattening both onto the clip boundary. Caller state is restored.
+Same-binary controls `SONICR_VR_TRACK_FLOAT=0`, `SONICR_VR_HUD_DEPTH=0` and
+`SONICR_VR_SKY_ROTATION=0` restore each previous eye path independently.
+
+`tests/vr/run-pose-render.sh` links the actual installed 2ebbb33 track TU and
+extracts its actual panorama/emitter as hashed controls. The full track object
+loop produces 2,106 baseline leaks versus zero corrected leaks over 15,876
+interior float32 road/grid samples (horizontal/tilted planes, combined poses,
+far 8000/88000; ties fail). It also checks 81 exact native/identity/legacy-control
+streams, near clipping with exact native fan/UV/color order, nonzero local
+rotations, conservative bounds and reversed eye repeats. Actual pause, minimap,
+status/results producers retain interior depth priorities. Wide asymmetric,
+canted-eye sky coverage has 355 baseline holes versus zero over 7,730 upper-sky
+samples, across all five tracks/mirror modes. At native FOV, neutral optical-axis atlas
+coordinates differ by at most 0.057 texel from the actual old renderer (bounded
+32-unit cylinder chord sag), including the Emerald rim. These are CPU production-path
+checks, not proof of worn blink relief or the user's exact road location.
+For source snapshots without Git, set `SONICR_TEST_POSE_BASELINE` to the absolute
+2ebbb33 `source/sdl/src` directory; function/TU SHA checks reject other sources.
+The existing `SONICR_TEST_LEGACY_BACKEND` override still supplies f249 backend.
+
+For actual-game pose A/B captures, add `SONICR_VR_FIXTURE_POSE=1` to DIAGNOSTIC,
+or to bounded runtime AUTORACE+OFFHEAD_RENDER+OFFHEAD_NEUTRAL. It forces combined
+yaw/pitch/roll with distinct canted eyes, locked to native tick rather than FPS,
+and uses current native chase camera (alpha1) for exact tick matching. Runtime
+FOV can remain calibrated via OFFHEAD_RUNTIME_FOV=1. Synthetic runtime poses
+always submit zero compositor layers; this fixture cannot validate worn handoff.
+`SONICR_VR_FIXTURE_PAUSE_TICK=90` injects Start through the real virtual pad and
+native ReadInput/UpdatePerPlayerInput pause handling. VR presentation tick counts
+continue while physics is paused; use DUMP_TICK=120 or180 and require actual
+`paused:1` records. With replay, choose a pause tick greater than60 (intro).
+
+`SONICR_VR_DUMP_STREAM=/absolute/output.jsonl` writes only the selected DUMP_TICK
+under DIAGNOSTIC or bounded OFFHEAD_RENDER, with no GL queries/readbacks. View
+records contain runtime FOV/pose; camera records contain composed basis, origin,
+far and interpolation alpha. Draw records include eye, layer, identity/repeat,
+native paused flag, stage (0 other,1 grid,2 track including object subentries,
+3 HUD,4 sky/reflection), and source/output vertices:
+`[sx,sy,sz,rhw,ARGB,u,v,X,Y,Z,W]`. State is the 60-byte backend desired snapshot
+encoded as hex (native little-endian 4-byte texture,blend,depthTest,depthFunc,
+depthWrite,texEnv,filter,cull,alphaTest,float alphaRef,scissorEnabled,x,y,w,h).
+Reverse mode maps native less/LEQUAL to greater/GEQUAL. Use this stream to locate
+real geometry ownership; pixel captures remain a separate diagnostic and must
+not substitute for a readback-free compositor/wear check. Compare ticks90,
+180 and360 with matched flags/seed/weather, then paused120/180; these samples
+exercise the real game and head motion without claiming the original video route.

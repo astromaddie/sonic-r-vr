@@ -202,6 +202,7 @@ static void lifecycleTest(void){
  assert(!memcmp(nativeProjection,gpu.projection,sizeof nativeProjection));
  puts("world depth lifecycle: D24 identity/menu, same-size32F reallocation, zero-to-one projection, GEQUAL/GREATER/ALWAYS, clears, layers, release and abandoned-target shutdown restoration passed");
 }
+#ifndef WORLD_DEPTH_LIBRARY
 int main(void){
  uint64_t immediateHash=0;
  for(fixtureArrays=0;fixtureArrays<2;fixtureArrays++){
@@ -212,3 +213,5 @@ int main(void){
  }
  return 0;
 }
+
+#endif

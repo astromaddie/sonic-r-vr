@@ -148,7 +148,9 @@ static void draw(int n){
  if(legacyRenderer)Legacy_DrawTriFan(v,n);else R_DrawTriFan(v,n);logicalFans++;
 }
 void RenderHUD(void){if(raceProtocol)raceRenders[eye<0?0:eye+1]++;BeginFrame();draw(4);EndFrame();}
+#ifndef VR_REAL_CAMERA
 void SetViewportClipRect(int *cam){assert(cam);}
+#endif
 static void setup(int enabled,int mode){
  if(depthReversed)setDepthMode(0);
  R_SetVREarlyFlush(0);earlyFlushDraws=0;memset(&gpu,0,sizeof gpu);gpu.clipDepth=GL_NEGATIVE_ONE_TO_ONE;gpu.clearDepth=1;

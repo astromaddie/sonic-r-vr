@@ -31,5 +31,6 @@ void R_DrawQuad2DSolid(float x0, float y0, float x1, float y1,
 void R_EndFrame(void);
 void R_Flip(void);
 void R_ClearAndReset(void);
+void R_ClearDepth(void);
 
 #endif /* R_DRAW_H */
