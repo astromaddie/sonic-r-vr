@@ -136,15 +136,17 @@ static void GL_ApplyTpageFilter(int tp)
 }
 
 #if SONICR_VR
-static int s_vrBatching=1,s_batchOpen;
+static int s_vrBatching=1,s_batchOpen,s_vrDepthReversed;
 static unsigned s_batchVertices;
+static uint32_t s_batchColor;
+static int s_batchColorValid;
 static R_StateSnapshot s_batchState;
 static unsigned char s_batchFilter;
 void R_EndBatch(void)
 {
     if (!s_batchOpen) return;
     glEnd();
-    s_batchOpen=0;
+    s_batchOpen=0;s_batchColorValid=0;
     VR_TraceBatch(s_batchVertices);
     s_batchVertices=0;
 }
@@ -152,6 +154,26 @@ void R_SetVRBatching(int enabled)
 {
     R_EndBatch();
     s_vrBatching=enabled!=0;
+}
+#endif
+
+static GLenum GL_DepthComparison(R_DepthFunc f)
+{
+#if SONICR_VR
+    if (s_vrDepthReversed) {
+        if (f==R_DEPTH_LEQUAL) return GL_GEQUAL;
+        if (f==R_DEPTH_LESS) return GL_GREATER;
+    }
+#endif
+    return f==R_DEPTH_LEQUAL?GL_LEQUAL:f==R_DEPTH_LESS?GL_LESS:GL_ALWAYS;
+}
+#if SONICR_VR
+void R_SetVRDepthReversed(int enabled)
+{
+    R_EndBatch();
+    s_vrDepthReversed=enabled!=0;
+    glDepthFunc(GL_DepthComparison(s_desired.depthFunc));
+    s_current.depthFunc=s_desired.depthFunc;
 }
 #endif
 
@@ -214,17 +236,7 @@ void R_FlushState(void)
 
     /* Depth function */
     if (s_desired.depthFunc != s_current.depthFunc) {
-        switch (s_desired.depthFunc) {
-            case R_DEPTH_LEQUAL:
-                glDepthFunc(GL_LEQUAL);
-                break;
-            case R_DEPTH_LESS:
-                glDepthFunc(GL_LESS);
-                break;
-            case R_DEPTH_ALWAYS:
-                glDepthFunc(GL_ALWAYS);
-                break;
-        }
+        glDepthFunc(GL_DepthComparison(s_desired.depthFunc));
         s_current.depthFunc = s_desired.depthFunc;
     }
 
@@ -473,17 +485,28 @@ void R_ResetState(void)
 static inline void R_EmitVertex(const RenderVertex *v)
 {
     uint32_t argb = v->color;
-    float a = (float)((argb >> 24) & 0xFF) / 255.0f;
-    float r = (float)((argb >> 16) & 0xFF) / 255.0f;
-    float g = (float)((argb >>  8) & 0xFF) / 255.0f;
-    float b = (float)((argb      ) & 0xFF) / 255.0f;
-    glColor4f(r, g, b, a);
+#if SONICR_VR
+    /* Current GL color persists within Begin/End. Only cache inside our own
+     * eye batch; every new batch emits its first color after external GL. */
+    if (!s_batchOpen || !s_batchColorValid || argb!=s_batchColor) {
+#endif
+        float a = (float)((argb >> 24) & 0xFF) / 255.0f;
+        float r = (float)((argb >> 16) & 0xFF) / 255.0f;
+        float g = (float)((argb >>  8) & 0xFF) / 255.0f;
+        float b = (float)((argb      ) & 0xFF) / 255.0f;
+        glColor4f(r, g, b, a);
+#if SONICR_VR
+        if (s_batchOpen) { s_batchColor=argb;s_batchColorValid=1; }
+    }
+#endif
     glTexCoord2f(v->u, v->v);
 
-    float w = (v->rhw > 0.0f) ? (1.0f / v->rhw) : 1.0f;
 #if SONICR_VR
     if (VR_EyeActive()) { VR_EmitVertex(v); return; }
 #endif
+    /* VR_EmitVertex computes its own W. Keep the native reciprocal after the
+     * early return: GCC -Os otherwise evaluates it twice for each eye vertex. */
+    float w = (v->rhw > 0.0f) ? (1.0f / v->rhw) : 1.0f;
     glVertex4f(v->sx * w, v->sy * w, v->sz * w, w);
 }
 
@@ -507,7 +530,7 @@ void R_DrawTriFan(const RenderVertex *v, int count)
             filter!=s_batchFilter || (textured && s_glTextureDirty[tp])) {
             R_FlushState();
             glBegin(GL_TRIANGLES);
-            s_batchOpen=1;s_batchVertices=0;
+            s_batchOpen=1;s_batchVertices=0;s_batchColorValid=0;
             s_batchState=s_desired;s_batchFilter=filter;
         }
         /* Exactly the original fan's triangle/vertex order, including its

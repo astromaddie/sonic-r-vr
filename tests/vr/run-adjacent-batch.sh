@@ -23,7 +23,11 @@ a=source.index('void R_DrawTriFan(');b=source.index('void R_DrawTri(',a)
 body=source[a:b]
 if hashlib.sha256(body.encode()).hexdigest()!='269c066dd7552dd16a6e8c6063bee9ea8f13399db8228e0dedf4c1a654741579':
     raise SystemExit('Legacy fan function hash mismatch')
-pathlib.Path(sys.argv[1]).write_text(body.replace('void R_DrawTriFan(', 'static void Legacy_DrawTriFan(',1))
+a=source.index('static inline void R_EmitVertex(');b=source.index('void R_DrawTriFan(',a)
+emitter=source[a:b]
+if hashlib.sha256(emitter.encode()).hexdigest()!='28997d1f663c9cf385d8566ca42f82b2054c84172b540015ad99f28e908f47bb':
+    raise SystemExit('Legacy vertex emitter hash mismatch')
+pathlib.Path(sys.argv[1]).write_text(emitter.replace('static inline void R_EmitVertex(', 'static inline void Legacy_BackendEmitVertex(',1)+body.replace('void R_DrawTriFan(', 'static void Legacy_DrawTriFan(',1).replace('R_EmitVertex(', 'Legacy_BackendEmitVertex('))
 PYREF
 ${CC:-cc} -Os -std=c11 -D_POSIX_C_SOURCE=200809L -DSONICR_VR=1 -DSONICR_SDL \
  -Wno-deprecated-declarations -ffunction-sections -fdata-sections \

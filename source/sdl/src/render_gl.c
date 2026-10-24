@@ -508,7 +508,13 @@ void BeginFrame(void)
 #ifndef SONICR_GLES2
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
+#if SONICR_VR
+    /* Zero-to-one reversed depth needs Z identity, avoiding 2*z-w cancellation.
+     * The XY projection and modelview arithmetic remain exactly native. */
+    glOrtho(left, right, bottom, top, VR_DepthReversed()?1:0, -1);
+#else
     glOrtho(left, right, bottom, top, 0, -1);
+#endif
 
     /* Modelview: transform game screen coords [0,W]×[0,H] → clip volume */
     glMatrixMode(GL_MODELVIEW);

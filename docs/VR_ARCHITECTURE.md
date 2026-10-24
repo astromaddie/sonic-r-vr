@@ -51,7 +51,8 @@ eye's asymmetric tangent bounds. At emission the backend recovers
 `x=(sx-cx)*z/fx`, `y=(cy-sy)*z/fy`, `z=1/rhw`, then maps that same eye-space
 vertex to the exact runtime floating FOV. This final correction only removes
 integer frustum rounding; it does not rotate/recover a source-culled flat frame.
-The original perspective-correct UV interpolation and depth ordering remain.
+The original perspective-correct UV interpolation and producer depth biases
+remain. The race-eye world-depth correction below changes depth interpolation.
 
 ## Draw inventory
 
@@ -294,6 +295,10 @@ matched device pixels and timing determine whether the optimization is retained.
 
 Adjacent eye primitives are grouped into `GL_TRIANGLES` runs, expanding each
 original fan in `(0,i,i+1)` order through the same immediate vertex emitter.
+Identical packed vertex colors reuse current GL color only within an open eye
+batch; batch boundaries invalidate that cache. Native/identity fans still emit
+every color. The backend defers its native reciprocal until after the eye
+emitter's early return, avoiding duplicate W calculation without changing math.
 Runs stop at changes to desired render state, texture/filter or dirty texture,
 and at explicit state/resource/camera/layer/frame/readback boundaries. There is
 no geometry sorting, deferred vertex storage or new GPU wait. Native/canonical
@@ -311,9 +316,28 @@ batching using a strict GL recorder: exact ordered triangle vertices/effective
 state/resource events, no illegal GL calls inside Begin, unchanged native and
 identity routes, and actual lifecycle/texture/clear/readback/menu boundaries.
 Source-only snapshots can set `SONICR_TEST_LEGACY_BACKEND` to the absolute frozen
-baseline `r_gl_backend.c`; the extracted legacy function hash is verified.
+baseline `r_gl_backend.c`; extracted legacy fan and vertex-emitter hashes are verified.
 Matched real-game pixels and capture-free total frame timing remain required
 for acceptance; CPU fixture batch-count reduction alone is insufficient.
+
+Race rendering uses a shared completion by default;
+`SONICR_VR_PAIRED_COMPLETE=0` retains the established per-eye control path. Each eye still ends and
+flushes its own picture. Both acquired/waited images remain owned until one
+`glFlush`/`glFinish` completes their GL work, then both are released before
+`xrEndFrame`. Menus and synthetic diagnostics retain their existing path.
+The `paired_complete` performance field and startup log identify the selection.
+This scheduling change does not alter geometry or quality.
+
+Runtime dump captures in paired mode happen after that shared finish and
+before either release; they never insert a readback between eye draws. Normal
+frames add no readbacks. Use bounded neutral off-head runtime captures for
+actual-driver correctness, then separate capture-free matched timing runs.
+Synthetic diagnostic parity alone does not exercise the XR completion change.
+The production race-loop/strict-GL fixture checks capture ordering and unchanged
+canonical/eye pass counts; the XR fixture checks completion before release,
+partial failures, abandonment, shutdown and wait timeouts. OpenXR requires
+successful acquire/wait before use/release; `XR_TIMEOUT_EXPIRED` is success-class
+but does not grant image availability ([primary specification](https://github.com/KhronosGroup/OpenXR-Docs/blob/main/specification/sources/chapters/rendering.adoc)).
 
 On Frame's Zink/Turnip driver, a matched native GCC 15.1.1 executable with
 batching disabled/enabled rendered the five-player Resort Island snow fixture
@@ -556,3 +580,66 @@ the temporary wrapper was removed, and the per-title environment file remains
 absent. All 449 original game-data files matched exactly after the run; only
 the newly generated, previously absent `SONICR.INF` was removed. The shared
 Frame slot was then released to the next queued session.
+
+For off-head coverage using the runtime's calibrated view bounds, add
+`SONICR_VR_OFFHEAD_RUNTIME_FOV=1` to bounded `OFFHEAD_RENDER=1`,
+`OFFHEAD_NEUTRAL=1`, `AUTORACE=1`, `RUN_SECONDS=1..300`. Only the FOV comes
+from `xrLocateViews`; poses remain explicitly synthetic, swapchain dimensions
+and XR pacing remain native, and no layers are submitted. Both FOVs are logged
+once. Missing views, nonfinite angles, unordered bounds or angles outside
+(-pi/2, pi/2) fail the diagnostic, including when located poses are invalid.
+The default neutral fixture remains 90 by 74 degrees for prior comparisons;
+normal worn tracking does not use this option.
+
+
+Race-eye depth correction is enabled by default; `SONICR_VR_DEPTH=0` retains
+the previous depth path for matched diagnostics. Native D3D-style `sz` is linear camera
+depth. Interpolating it in screen space gives differently tessellated coplanar
+track and terrain different depths, allowing terrain squares across the track.
+For native normalized depth `s`, the eye emitter uses direct reversed depth
+`n*(1-s)/(s*(1-n))`, where `n=1/(farClip+64)`. This preserves each producer's
+native numerator bias and far-divisor offset, the one-unit near geometry and
+`s=1` far boundary. Grid screen-edge clipping interpolates the mapped depth;
+UV, fog and near-plane geometry retain their native paths.
+
+Race eyes require verified32-bit floating depth, zero-to-one clip control and
+a Z-identity projection, with native XY/W unchanged. Logical less/less-equal
+comparisons become greater/greater-equal and depth clears to zero. HUD, sky,
+reflection and fade depths are complemented to preserve their existing order.
+Every eye unbind and shutdown restores the projection stack, conventional clip
+mode, clear value and logical comparison. Identity targets and menus use D24;
+attachment reuse checks format as well as dimensions. Canonical and `VR=0`
+rendering stay on the existing path. No readback or completion is added to
+ordinary frames; attachment type is checked only when storage is allocated.
+
+This precision requirement is substantive: Frame's tested driver provides only
+24 normalized bits for `GL_DEPTH_COMPONENT32`. Forward float32 also loses the
+needed far-distance separation. Reversed float32 with zero-to-one clipping
+preserves it. See the [clip-control specification](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_clip_control.txt)
+for the depth-range precision loss avoided by zero-to-one mapping.
+`tests/vr/run-world-depth.sh` exercises actual track/grid/shadow producers,
+backend and emitter with strict post-storage ordering (ties fail), tilted and
+near-clipped planes, camera motion, asymmetric/repeated eyes, ranges up to
+88000 units, and context/attachment restoration. Native Frame checks verify32-bit float attachment support, repeated-eye
+image stability, and exact native/identity captures against the previous depth
+path. These checks do not establish comfort or sustained display cadence.
+
+
+For a moving off-head benchmark, `SONICR_VR_FIXTURE_REPLAY=1` reads the owned
+`BIN/DEMOS/ISLAND.DEM` into private memory. It requires runtime
+`AUTORACE=1`, `OFFHEAD_RENDER=1` and `RUN_SECONDS=1..300`; it rejects synthetic
+diagnostics and other tracks. The fixture uses an Island GP race with five
+players and the selected weather/time. It retains `DEMO_NONE`, so normal chase
+camera updates resume at GO instead of the attract-mode camera.
+
+The fifteen-word little-endian header is validated before loading the P1 pads.
+Replay starts with countdown60, matching native recording/playback's
+`countdown<61` condition. Only the canonical native input hook consumes a pad;
+eye repeats do not. Gameplay actions are retained, Start/menu input is masked,
+paused/postrace ticks hold the cursor, and exhaustion yields neutral input.
+Race restart reloads the private stream; shutdown frees it. Native ghost
+recording cannot overwrite this private copy. The performance log includes
+`fixture_replay` and `replay_pad`; compare moving runs before exhaustion.
+`tests/vr/run-replay-fixture.sh` tests the production parser, startup gates,
+configuration and input/reset lifecycle. Optional `SONICR_TEST_DEMO` points to
+an owned file for additional parser verification; no game data is committed.

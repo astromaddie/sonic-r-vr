@@ -19,6 +19,13 @@ void glReadBuffer(GLenum b){(void)b;}
 GLenum glCheckFramebufferStatus(GLenum t){(void)t;return GL_FRAMEBUFFER_COMPLETE;}
 void glDisable(GLenum c){(void)c;}
 void glViewport(GLint x,GLint y,GLsizei w,GLsizei h){(void)x;(void)y;(void)w;(void)h;}
+void glMatrixMode(GLenum m){(void)m;assert(0);}
+void glPushMatrix(void){assert(0);}
+void glPopMatrix(void){assert(0);}
+void glClearDepth(GLdouble d){(void)d;assert(0);}
+void glDepthFunc(GLenum f){(void)f;assert(0);}
+void glGetRenderbufferParameteriv(GLenum t,GLenum p,GLint *v){(void)t;(void)p;(void)v;assert(0);}
+void glGetFramebufferAttachmentParameteriv(GLenum t,GLenum a,GLenum p,GLint *v){(void)t;(void)a;(void)p;(void)v;assert(0);}
 void glDepthMask(GLboolean b){(void)b;}
 void glClearColor(GLfloat r,GLfloat g,GLfloat b,GLfloat a){(void)r;(void)g;(void)b;(void)a;}
 void glClear(GLbitfield b){(void)b;}

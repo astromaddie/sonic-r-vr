@@ -83,6 +83,7 @@ void R_FlushState(void);
 #if SONICR_VR
 void R_EndBatch(void);
 void R_SetVRBatching(int enabled);
+void R_SetVRDepthReversed(int enabled);
 #else
 static inline void R_EndBatch(void) {}
 #endif

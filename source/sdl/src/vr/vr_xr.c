@@ -21,13 +21,24 @@ static XrSpace space;
 static XrSwapchain chain[2];
 static XrSwapchainImageOpenGLKHR *images[2];
 static int width[2],height[2],running,begun,quit,acquired[2],waited[2];
+static int completed[2];
 static XrFrameState frame;
 static int focused;
 static uint32_t runStart,runLimit,lastProgress;
 static unsigned frameWaits,standbyFrames,invalidFrames,validFrames,submittedFrames,renderedEyes,fallbackFrames,forcedFrames;
-static int offheadRender,forceNeutral,lastPoseKind=-1;
+static int offheadRender,forceNeutral,runtimeFov,runtimeFovLogged,lastPoseKind=-1;
 int vr_xr_offhead(void) { return offheadRender; }
-void vr_xr_deadline(unsigned seconds,int offhead,int neutral) { runStart=lastProgress=SDL_GetTicks();runLimit=seconds*1000;offheadRender=offhead;forceNeutral=neutral && offhead && seconds; }
+void vr_xr_deadline(unsigned seconds,int offhead,int neutral) { runStart=lastProgress=SDL_GetTicks();runLimit=seconds*1000;offheadRender=offhead;forceNeutral=neutral && offhead && seconds;runtimeFov=runtimeFovLogged=0; }
+int vr_xr_runtime_fov(int enabled) {
+    if(enabled && !forceNeutral)return 0;
+    runtimeFov=enabled;runtimeFovLogged=0;return 1;
+}
+static int validFov(XrFovf f) {
+    const float limit=1.57079632679f;
+    return isfinite(f.angleLeft) && isfinite(f.angleRight) && isfinite(f.angleUp) && isfinite(f.angleDown) &&
+        f.angleLeft>-limit && f.angleRight<limit && f.angleDown>-limit && f.angleUp<limit &&
+        f.angleLeft<f.angleRight && f.angleDown<f.angleUp;
+}
 static void progress(const char *reason) {
     fprintf(stderr,"[vr-runtime] %s elapsed_ms=%u running=%d focused=%d waits=%u standby=%u invalid_pose=%u valid_pose=%u synthetic_pose=%u forced_neutral_pose=%u rendered_eyes=%u submitted_layers=%u offhead=%d\n",
         reason,SDL_GetTicks()-runStart,running,focused,frameWaits,standbyFrames,invalidFrames,validFrames,fallbackFrames,forcedFrames,renderedEyes,submittedFrames,offheadRender);
@@ -157,13 +168,23 @@ int vr_xr_begin(VREye eyes[2],int64_t *time) {
         XrViewState vs={.type=XR_TYPE_VIEW_STATE};uint32_t n=0;
         for(int e=0;e<2;e++)views[e]=(XrView){.type=XR_TYPE_VIEW};
         if(!check(xrLocateViews(session,&li,&vs,2,&n,views),"xrLocateViews"))return -1;
+        if(runtimeFov) {
+            if(n!=2 || !validFov(views[0].fov) || !validFov(views[1].fov)) {
+                check(XR_ERROR_VALIDATION_FAILURE,"OFFHEAD_RUNTIME_FOV invalid calibrated views");return -1;
+            }
+            if(!runtimeFovLogged) {
+                for(int e=0;e<2;e++)fprintf(stderr,"[vr-runtime] forced-neutral calibrated_fov eye=%d left=%.9g right=%.9g up=%.9g down=%.9g layers=0\n",
+                    e,views[e].fov.angleLeft,views[e].fov.angleRight,views[e].fov.angleUp,views[e].fov.angleDown);
+                runtimeFovLogged=1;
+            }
+        }
         XrViewStateFlags valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
         int poseValid=n==2 && (vs.viewStateFlags&valid)==valid;
         if(forceNeutral){poseValid=0;forcedFrames++;}
         else if(!poseValid){invalidFrames++;if(!offheadRender)return 0;fallbackFrames++;}
         else validFrames++;
         if(offheadRender && (lastPoseKind!=poseValid || frameWaits==1)) {
-            fprintf(stderr,"[vr-runtime] offhead shouldRender=%d pose=%s layers=0\n",frame.shouldRender,forceNeutral?"forced-neutral-64mm-fov90x74":poseValid?"located":"synthetic-neutral-64mm-fov90x74");
+            fprintf(stderr,"[vr-runtime] offhead shouldRender=%d pose=%s layers=0\n",frame.shouldRender,forceNeutral?(runtimeFov?"forced-neutral-64mm-runtime-fov":"forced-neutral-64mm-fov90x74"):poseValid?"located":"synthetic-neutral-64mm-fov90x74");
             lastPoseKind=poseValid;
         }
         for(int e=0;e<2;e++) {
@@ -174,7 +195,8 @@ int vr_xr_begin(VREye eyes[2],int64_t *time) {
             } else {
                 /* Bounded GPU diagnostic only, never submitted as tracked views. */
                 eyes[e].pose=(VRPose){{0,0,0,1},{e?0.032f:-0.032f,0,0}};
-                eyes[e].fov=(VRFov){-0.7853981634f,0.7853981634f,0.6435011088f,-0.6435011088f};
+                eyes[e].fov=runtimeFov?(VRFov){f.angleLeft,f.angleRight,f.angleUp,f.angleDown}:
+                    (VRFov){-0.7853981634f,0.7853981634f,0.6435011088f,-0.6435011088f};
             }
             eyes[e].width=width[e];eyes[e].height=height[e];
         }
@@ -182,28 +204,46 @@ int vr_xr_begin(VREye eyes[2],int64_t *time) {
     }
     return -1;
 }
+static int waitImage(int eye) {
+    XrSwapchainImageWaitInfo wi={.type=XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,.timeout=XR_INFINITE_DURATION};
+    XrResult result;
+    /* A timeout is XR_SUCCEEDED but does not transfer image ownership. */
+    do { result=xrWaitSwapchainImage(chain[eye],&wi); } while(result==XR_TIMEOUT_EXPIRED);
+    if(!check(result,"xrWaitSwapchainImage"))return 0;
+    waited[eye]=1;return 1;
+}
 unsigned vr_xr_acquire(int eye) {
+    if(acquired[eye]){check(XR_ERROR_CALL_ORDER_INVALID,"duplicate eye acquisition");return 0;}
     XrSwapchainImageAcquireInfo ai={.type=XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};uint32_t index=0;
     if(!check(xrAcquireSwapchainImage(chain[eye],&ai,&index),"xrAcquireSwapchainImage"))return 0;
-    acquired[eye]=1;
-    XrSwapchainImageWaitInfo wi={.type=XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,.timeout=XR_INFINITE_DURATION};
-    if(!check(xrWaitSwapchainImage(chain[eye],&wi),"xrWaitSwapchainImage"))return 0;
-    waited[eye]=1;return images[eye][index].image;
+    acquired[eye]=1;waited[eye]=completed[eye]=0;
+    if(!waitImage(eye))return 0;
+    return images[eye][index].image;
+}
+int vr_xr_complete_pair(void) {
+    if(!acquired[0] || !acquired[1] || !waited[0] || !waited[1])return 0;
+    /* Both eye passes already flushed at EndFrame. Finish the same GL queue
+     * once, retaining Frame's completion-before-release bridge requirement. */
+    glFlush();glFinish();completed[0]=completed[1]=1;
+    return 1;
 }
 void vr_xr_release(int eye) {
     if(!acquired[eye])return;
-    if(!waited[eye]) {
-        XrSwapchainImageWaitInfo wi={.type=XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,.timeout=XR_INFINITE_DURATION};
-        if(!check(xrWaitSwapchainImage(chain[eye],&wi),"xrWaitSwapchainImage(cleanup)"))return;
-    }
+    if(!waited[eye] && !waitImage(eye))return;
     /* The verified Frame Zink bridge requires completion before release. No
      * CPU readback; revisit this explicit fence only with matched device data. */
-    glFlush();glFinish();
+    if(!completed[eye]){glFlush();glFinish();completed[eye]=1;}
     XrSwapchainImageReleaseInfo ri={.type=XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    if(check(xrReleaseSwapchainImage(chain[eye],&ri),"xrReleaseSwapchainImage"))acquired[eye]=waited[eye]=0;
+    if(check(xrReleaseSwapchainImage(chain[eye],&ri),"xrReleaseSwapchainImage"))acquired[eye]=waited[eye]=completed[eye]=0;
 }
 void vr_xr_end(int rendered) {
     if(!begun)return;
+    /* Abandoned/partially rendered frames must not retain an acquired image.
+     * Normal race/menu calls have already released both, so this is a no-op. */
+    if(acquired[0] || acquired[1]) {
+        rendered=0;
+        for(int e=0;e<2;e++)vr_xr_release(e);
+    }
     if(rendered)renderedEyes+=2;
     if(offheadRender)rendered=0; /* Never display diagnostic imagery, even after a focus change. */
     XrCompositionLayerProjectionView pv[2];memset(pv,0,sizeof(pv));

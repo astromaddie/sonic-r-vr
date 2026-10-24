@@ -70,6 +70,21 @@ static inline void vr_project_cached(VRVec p,VRProjection f,float *x,float *y) {
     *x=2*p.x/(-p.z*(r-l))-(r+l)/(r-l);
     *y=2*p.y/(-p.z*(u-d))-(u+d)/(u-d);
 }
+/* Native s contains each producer's depth bias and far-divisor adjustment.
+ * A shared reciprocal map makes unbiased planes affine in screen space while
+ * retaining the ordering of those biases. Reversed depth is computed directly,
+ * never by subtracting a rounded forward depth from one. s=1 maps to zero.
+ * The largest active world divisor is F+64; its one-unit minimum sets n.
+ * Below n, use a finite clipped continuation (normal producers clip first). */
+static inline float vr_depth_near(float far) { return 1.0f/((far>0?far:88064.0f)+64.0f); }
+static inline float vr_depth_map(float s,float n) {
+    if(s<=0)return 2;
+    if(s<n)return 2-s/n;
+    return n*((1-s)/s)/(1-n);
+}
+static inline float vr_depth_unmap(float d,float n) {
+    return d>1?n*(2-d):n/(d*(1-n)+n);
+}
 /* One tick maximum per display frame. After a stall, re-anchor rather than
  * accelerating gameplay. Tick N is presented between N-1 and N (one tick lag). */
 static inline int vr_clock_step(VRClock *c,int64_t display,int visible) {

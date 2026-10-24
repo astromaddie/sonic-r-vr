@@ -22,6 +22,7 @@
 #include "r_state.h"
 #include "r_draw.h"
 #include "nearclip.h"   /* g_scissorEdge for split-screen fog suppression */
+#include "vr/vr.h"
 extern float g_farClipFullScreenF;  /* hud_full.c — far plane BEFORE the
                                      * split-screen reduction */
 #include <math.h>
@@ -342,6 +343,9 @@ static inline void grid_screen_lerp(const RenderVertex *a, const RenderVertex *b
     out->sx = a->sx + (b->sx - a->sx) * t;
     out->sy = a->sy + (b->sy - a->sy) * t;
     out->sz = a->sz + (b->sz - a->sz) * t;
+#if SONICR_VR
+    out->sz = VR_LerpWorldDepth(a->sz,b->sz,t);
+#endif
 
     /* PERSPECTIVE-CORRECT u/v. These vertices are already projected, so u and
      * v are NOT linear in screen space — only u*rhw and v*rhw are. Lerping u

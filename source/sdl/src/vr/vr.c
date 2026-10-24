@@ -15,9 +15,18 @@
 #include "platform.h"
 #include "r_state.h"
 #include "pad_bits.h"
+#include "sonicr_paths.h"
+#include "fileio.h"
+#ifndef GL_ZERO_TO_ONE
+#define GL_ZERO_TO_ONE 0x935F
+#define GL_NEGATIVE_ONE_TO_ONE 0x935E
+#endif
 static int initialized,diagnostic,eye=-1,repeat,layer,identity,presented,mirrorDirty;
 static int ticks,frames,extraPasses,dumpTick=90,autoRace,drive,runtimeDump;
 static int traceDraw,stereoCheck;
+static int fixtureReplay;
+static unsigned short *replayPads;
+static unsigned replayCount,replayIndex;
 static uint64_t drawHash;
 static unsigned drawCount;
 static float units=80,diagYaw,diagRoll;
@@ -56,6 +65,13 @@ static double perfWindow,perfLastFrame,perfSimStart,perfWeatherStart,perfMaxInte
 static double perfMs[8],perfWeatherMs[3];
 static unsigned perfFrames,perfTicks,perfDraws[3],perfWeatherDraws[3],perfSubmits[3],perfVertices[3];
 static int batching=1;
+static int pairedComplete;
+static int perspectiveDepth;
+static float depthNear;
+static int depthReversed;
+static GLenum depthFormat[2];
+static void (*clipControl)(GLenum,GLenum);
+static void setDepthMode(int enabled);
 static double perfNow(void) {
     return perfEnabled ? (double)SDL_GetPerformanceCounter()*1000.0/SDL_GetPerformanceFrequency() : 0;
 }
@@ -70,11 +86,11 @@ static void perfReport(void) {
     if(!perfEnabled)return;
     double now=perfNow(),elapsed=now-perfWindow;
     if(elapsed<1000 || !perfFrames)return;
-    fprintf(stderr,"[vr-perf] track=%d weather=%d tod=%d frames=%u ticks=%u wall_ms=%.3f fps=%.2f tick_hz=%.2f max_interval_ms=%.3f begin_ms=%.3f sim_ms=%.3f native_ms=%.3f acquire_ms=%.3f eyes_ms=%.3f release_ms=%.3f end_ms=%.3f mirror_ms=%.3f draws=%u,%u,%u weather_draws=%u,%u,%u gl_submits=%u,%u,%u gl_vertices=%u,%u,%u batch=%d weather_ms=%.3f,%.3f,%.3f synthetic=%d observer=%d\n",
+    fprintf(stderr,"[vr-perf] track=%d weather=%d tod=%d frames=%u ticks=%u wall_ms=%.3f fps=%.2f tick_hz=%.2f max_interval_ms=%.3f begin_ms=%.3f sim_ms=%.3f native_ms=%.3f acquire_ms=%.3f eyes_ms=%.3f release_ms=%.3f end_ms=%.3f mirror_ms=%.3f draws=%u,%u,%u weather_draws=%u,%u,%u gl_submits=%u,%u,%u gl_vertices=%u,%u,%u batch=%d paired_complete=%d fixture_replay=%d replay_pad=%u weather_ms=%.3f,%.3f,%.3f synthetic=%d observer=%d\n",
         g_trackId,g_weatherType,g_timeOfDay,perfFrames,perfTicks,elapsed,perfFrames*1000/elapsed,perfTicks*1000/elapsed,perfMaxInterval,
         perfMs[0]/perfFrames,perfMs[1]/perfFrames,perfMs[2]/perfFrames,perfMs[3]/perfFrames,perfMs[4]/perfFrames,perfMs[5]/perfFrames,perfMs[6]/perfFrames,perfMs[7]/perfFrames,
         perfDraws[0],perfDraws[1],perfDraws[2],perfWeatherDraws[0],perfWeatherDraws[1],perfWeatherDraws[2],
-        perfSubmits[0],perfSubmits[1],perfSubmits[2],perfVertices[0],perfVertices[1],perfVertices[2],batching,
+        perfSubmits[0],perfSubmits[1],perfSubmits[2],perfVertices[0],perfVertices[1],perfVertices[2],batching,pairedComplete,fixtureReplay,replayIndex,
         perfWeatherMs[0]/perfFrames,perfWeatherMs[1]/perfFrames,perfWeatherMs[2]/perfFrames,diagnostic,diagnostic || runtimeDump || stereoCheck);
     perfWindow=now;perfFrames=perfTicks=0;perfMaxInterval=0;
     memset(perfMs,0,sizeof perfMs);memset(perfWeatherMs,0,sizeof perfWeatherMs);
@@ -168,7 +184,44 @@ static uint64_t imageFingerprint(int e) {
 int VR_Diagnostic(void) { return diagnostic; }
 unsigned short VR_PadBits(void) { return vr_input_read(g_joystickConfigWords); }
 int VR_AutoRace(void) { return diagnostic || autoRace; }
-void VR_DiagnosticInput(void) { if(diagnostic && drive)g_perPlayerInput[0]|=PAD_ACCEL; }
+static void resetReplay(void) {
+    free(replayPads);replayPads=NULL;replayCount=replayIndex=0;
+}
+static int readReplay(FILE *file) {
+    /* Native Island DEM has fifteen LE16 header words, then one P1 stream.
+     * Keep a private copy: normal race input overwrites g_taGhostSource. */
+    static const unsigned short header[14]={1,5,1,1,0,0,1,0,1,0,1,2,3,4};
+    unsigned char bytes[30];resetReplay();
+    if(fRead(bytes,1,sizeof bytes,file)!=sizeof bytes)return 0;
+    for(int i=0;i<14;i++)if((unsigned)(bytes[i*2]|bytes[i*2+1]<<8)!=header[i])return 0;
+    unsigned count=bytes[28]|bytes[29]<<8;
+    if(!count || count>0x8000)return 0;
+    unsigned short *pads=malloc(count*sizeof *pads);if(!pads)return 0;
+    for(unsigned i=0;i<count;i++) {
+        unsigned char word[2];
+        if(fRead(word,1,2,file)!=2){free(pads);return 0;}
+        pads[i]=(unsigned short)(word[0]|word[1]<<8);
+    }
+    if(fgetc(file)!=EOF || fError(file)){free(pads);return 0;}
+    replayPads=pads;replayCount=count;return 1;
+}
+void VR_DiagnosticInput(void) {
+    if(fixtureReplay) {
+        unsigned short pad=0;
+        if(!g_isPaused && g_introCountdown<61 && !g_postRaceCameraMode && replayIndex<replayCount) {
+            pad=replayPads[replayIndex++];
+            if(replayIndex==replayCount)fprintf(stderr,"[vr] fixture_replay exhausted pads=%u tick=%d\n",replayCount,ticks);
+        }
+        /* Only gameplay actions; the fixture cannot inject pause/menu input.
+         * Intro masking matches normal native recording at countdown60..1. */
+        pad&=PAD_DIRECTIONS|PAD_ACCEL|PAD_ABILITY|PAD_DRIFTL|PAD_DRIFTR|PAD_CAMERA;
+        if(g_introCountdown>0)pad&=0x3957;
+        g_perPlayerInput[0]=pad;g_combinedInputState=pad;g_inputBits=0;
+        return;
+    }
+    if(diagnostic && drive)g_perPlayerInput[0]|=PAD_ACCEL;
+}
+int VR_DepthReversed(void) { return depthReversed; }
 int VR_EyeActive(void) { return eye>=0 && !identity; }
 int VR_Repeat(void) { return repeat; }
 void VR_Layer(int value) { if(layer!=value)R_EndBatch();layer=value; }
@@ -178,18 +231,23 @@ void VR_ConfigureAutoRace(void) {
     const char *weather=getenv("SONICR_VR_FIXTURE_WEATHER");
     const char *track=getenv("SONICR_VR_FIXTURE_TRACK");
     const char *time=getenv("SONICR_VR_FIXTURE_TIME");
-    if(!weather && !track && !time)return;
+    if(!weather && !track && !time && !fixtureReplay)return;
     /* Native LoadTrackSinglePlayer selects weather and cycles time before
      * texture/particle initialization. Time attack would suppress precipitation. */
     g_raceType=RACE_TYPE_GP;g_numPlayers=MAX_PLAYERS;
     for(int i=0;i<MAX_PLAYERS;i++)g_playerBase[i].charId=(short)i;
     Srand(0x4BEE);
     g_trackId=(int)setting("SONICR_VR_FIXTURE_TRACK",1,1,5);
+    if(fixtureReplay && g_trackId!=TRACK_RESORT_ISLAND)die("FIXTURE_REPLAY requires Resort Island track1");
     g_weatherConfig=1+(int)setting("SONICR_VR_FIXTURE_WEATHER",0,0,2);
     g_timeOfDay=(int)setting("SONICR_VR_FIXTURE_TIME",0,0,3)-1;
     fprintf(stderr,"[vr] fixture track=%d weather_config=%d requested_tod=%d race_type=%d\n",g_trackId,g_weatherConfig,g_timeOfDay+1,g_raceType);
 }
 int VR_Init(void) {
+    perspectiveDepth=!(getenv("SONICR_VR_DEPTH") && !strcmp(getenv("SONICR_VR_DEPTH"),"0"));
+    fprintf(stderr,"[vr] perspective_world_depth=%d (SONICR_VR_DEPTH=0 disables)\n",perspectiveDepth);
+    pairedComplete=!(getenv("SONICR_VR_PAIRED_COMPLETE") && !strcmp(getenv("SONICR_VR_PAIRED_COMPLETE"),"0"));
+    fprintf(stderr,"[vr] paired_race_completion=%d (SONICR_VR_PAIRED_COMPLETE=0 disables)\n",pairedComplete);
     batching=!(getenv("SONICR_VR_BATCH") && !strcmp(getenv("SONICR_VR_BATCH"),"0"));
     R_SetVRBatching(batching);
     fprintf(stderr,"[vr] adjacent_eye_batching=%d (SONICR_VR_BATCH=0 disables)\n",batching);
@@ -204,13 +262,22 @@ int VR_Init(void) {
     if(offhead && (diagnostic || !autoRace || !runSeconds))die("OFFHEAD_RENDER requires runtime AUTORACE=1 and RUN_SECONDS=1..300");
     int neutral=getenv("SONICR_VR_OFFHEAD_NEUTRAL") && !strcmp(getenv("SONICR_VR_OFFHEAD_NEUTRAL"),"1");
     if(neutral && !offhead)die("OFFHEAD_NEUTRAL requires bounded runtime OFFHEAD_RENDER");
+    fixtureReplay=getenv("SONICR_VR_FIXTURE_REPLAY") && !strcmp(getenv("SONICR_VR_FIXTURE_REPLAY"),"1");
+    if(fixtureReplay && !offhead)die("FIXTURE_REPLAY requires bounded runtime OFFHEAD_RENDER and AUTORACE");
     vr_xr_deadline(runSeconds,offhead,neutral);
+    int runtimeFov=getenv("SONICR_VR_OFFHEAD_RUNTIME_FOV") && !strcmp(getenv("SONICR_VR_OFFHEAD_RUNTIME_FOV"),"1");
+    if(!vr_xr_runtime_fov(runtimeFov))die("OFFHEAD_RUNTIME_FOV requires bounded OFFHEAD_NEUTRAL");
     units=setting("SONICR_VR_WORLD_SCALE",80,8,800);
     diagYaw=setting("SONICR_VR_DIAG_YAW",0,-360,360)*0.01745329251994f;
     diagRoll=setting("SONICR_VR_DIAG_ROLL",0,-90,90)*0.01745329251994f;
     dumpTick=(int)setting("SONICR_VR_DUMP_TICK",90,1,900);
     dumpDir=getenv("SONICR_VR_DUMP_DIR");if(!dumpDir)dumpDir=".";
     if(!diagnostic && !vr_xr_init()){vr_xr_shutdown();return 0;}
+    if(perspectiveDepth) {
+        clipControl=(void (*)(GLenum,GLenum))SDL_GL_GetProcAddress("glClipControl");
+        if(!clipControl || !SDL_GL_ExtensionSupported("GL_ARB_clip_control"))die("world depth requires ARB_clip_control");
+    }
+    memset(depthFormat,0,sizeof depthFormat);
     glGenFramebuffers(1,&framebuffer);glGenRenderbuffers(2,depth);glGenTextures(1,&menuTexture);
     if(diagnostic) {
         glGenTextures(2,diagTexture);
@@ -229,6 +296,8 @@ int VR_Init(void) {
 void VR_Shutdown(void) {
     if(!initialized)return;
     R_EndBatch();
+    setDepthMode(0);
+    resetReplay();fixtureReplay=0;
     initialized=0;
     fprintf(stderr,"[vr] shutdown race_ticks=%d race_display_frames=%d stereo_passes=%d diagnostic=%d\n",ticks,frames,frames*2+extraPasses,diagnostic);
     if(!diagnostic)vr_xr_shutdown();
@@ -268,6 +337,14 @@ static int begin(void) {
     return visible;
 }
 void VR_RaceStart(void) {
+    resetReplay();
+    if(fixtureReplay) {
+        if(g_demoMode!=DEMO_NONE || g_trackId!=TRACK_RESORT_ISLAND || g_numPlayers!=MAX_PLAYERS)die("fixture replay requires native Island GP5 race");
+        FILE *file=fOpen(PATH_DEMOS "ISLAND.DEM","rb");
+        int loaded=file && readReplay(file);if(file)fClose(file);
+        if(!loaded)die("invalid or missing Island fixture replay");
+        fprintf(stderr,"[vr] fixture_replay=Island pads=%u countdown=60 demo_mode=%d native_chase=1\n",replayCount,g_demoMode);
+    }
     clockState=(VRClock){0};haveCamera=0;ticks=frames=extraPasses=0;presented=0;
     modeRace=1;anchored=0;focusSince=0;
     perfWindow=perfNow();perfLastFrame=0;perfFrames=perfTicks=0;perfMaxInterval=0;
@@ -277,7 +354,7 @@ void VR_RaceStart(void) {
     if(VR_AutoRace()) {
         /* Start at the actual race camera; the deterministic test needs neither
          * title/demo timers nor the flyover spline. Game data is read normally. */
-        g_introCountdown=0;g_introTimer=0;g_fadeLevel=0;g_fadeState=FADE_VISIBLE;
+        g_introCountdown=fixtureReplay?60:0;g_introTimer=0;g_fadeLevel=0;g_fadeState=FADE_VISIBLE;
         fprintf(stderr,"[vr] autorace ready track=%d players=%d synthetic=%d drive=%d weather=%d tod=%d precip_range=%d:%d particle_texture=%d snow_size=%d,%d\n",g_trackId,g_numPlayers,diagnostic,drive,g_weatherType,g_timeOfDay,g_precipVpRange[0],g_precipVpRange[1],g_tpageParticle1,g_precipParticles[0].sizeW,g_precipParticles[0].sizeH);
     }
 }
@@ -298,29 +375,72 @@ int VR_RaceFrame(void) {
         return tick;
     }
 }
+static void setDepthMode(int enabled) {
+    if(depthReversed==enabled)return;
+    R_EndBatch();
+    glMatrixMode(GL_PROJECTION);
+    if(enabled)glPushMatrix();else glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    depthReversed=enabled;
+    clipControl(GL_LOWER_LEFT,enabled?GL_ZERO_TO_ONE:GL_NEGATIVE_ONE_TO_ONE);
+    glClearDepth(enabled?0:1);
+    R_SetVRDepthReversed(enabled);
+}
 static void target(int e) {
     R_EndBatch();
     eye=e;cacheEyeProjection();R_ResetState();
+    setDepthMode(perspectiveDepth && modeRace && !identity);
+    depthNear=vr_depth_near(g_farClipFloat);
     GLuint color=diagnostic?diagTexture[e]:vr_xr_acquire(e);
     if(!color)die("eye acquisition");
+    eyes[e].texture=color;
     glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,color,0);
     glBindRenderbuffer(GL_RENDERBUFFER,depth[e]);
-    if(depthW[e]!=eyes[e].width || depthH[e]!=eyes[e].height) {
+    GLenum format=depthReversed?GL_DEPTH_COMPONENT32F:GL_DEPTH_COMPONENT24;
+    int allocate=depthW[e]!=eyes[e].width || depthH[e]!=eyes[e].height || depthFormat[e]!=format;
+    if(allocate) {
         depthW[e]=eyes[e].width;depthH[e]=eyes[e].height;
-        glRenderbufferStorage(GL_RENDERBUFFER,GL_DEPTH_COMPONENT24,depthW[e],depthH[e]);
+        glRenderbufferStorage(GL_RENDERBUFFER,format,depthW[e],depthH[e]);
+        depthFormat[e]=format;
     }
     glFramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,depth[e]);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);glReadBuffer(GL_COLOR_ATTACHMENT0);
     if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)die("eye framebuffer incomplete");
+    if(allocate && depthReversed) {
+        GLint bits=0,type=0;
+        glGetRenderbufferParameteriv(GL_RENDERBUFFER,GL_RENDERBUFFER_DEPTH_SIZE,&bits);
+        glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE,&type);
+        if(bits<32 || type!=GL_FLOAT)die("world depth requires a 32-bit floating depth attachment");
+        fprintf(stderr,"[vr] reversed_depth eye=%d bits=%d component=0x%x near_camera_units=1 clip=zero-to-one\n",e,bits,type);
+    }
     glDisable(GL_FRAMEBUFFER_SRGB);
     glViewport(0,0,eyes[e].width,eyes[e].height);glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 }
+static void unbindEye(void) {
+    R_EndBatch();
+    setDepthMode(0);
+    glBindFramebuffer(GL_FRAMEBUFFER,0);eye=-1;
+    glDrawBuffer(GL_BACK);glReadBuffer(GL_BACK);
+}
 static void release(void) {
     R_EndBatch();
+    setDepthMode(0);
     glBindFramebuffer(GL_FRAMEBUFFER,0);if(!diagnostic)vr_xr_release(eye);eye=-1;
     glDrawBuffer(GL_BACK);glReadBuffer(GL_BACK);
+}
+static void captureCompletedPair(void) {
+    /* Called only after the intended shared finish, before either release.
+     * Do not target()/clear/reacquire here or read back between the eye draws. */
+    R_EndBatch();glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    for(int e=0;e<2;e++) {
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,eyes[e].texture,0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,depth[e]);
+        capture(e?"eye1":"eye0",eyes[e].width,eyes[e].height);
+    }
+    unbindEye();
 }
 static int cameraSlot(void) {
     return (g_isNetworkGame || g_netSessionActive)?(unsigned short)g_localPlayerIndex:0;
@@ -358,6 +478,7 @@ void VR_RenderRace(int tick) {
         identity=0;
     }
     repeat=1;
+    int pair=pairedComplete && !diagnostic;
     int checkStereo=stereoCheck && ticks>=dumpTick-3;
     uint64_t images[2]={0},streams[2]={0};unsigned counts[2]={0};
     for(int e=0;e<2;e++) {
@@ -370,8 +491,14 @@ void VR_RenderRace(int tick) {
             char name[64];snprintf(name,sizeof(name),"frame%04d-eye%d",frames,e);
             capture(name,eyes[e].width,eyes[e].height);
         }
-        if(dump)capture(e?"eye1":"eye0",eyes[e].width,eyes[e].height);
-        stageStart=perfNow();release();perfAdd(5,stageStart);
+        if(dump && !pair)capture(e?"eye1":"eye0",eyes[e].width,eyes[e].height);
+        stageStart=perfNow();if(pair)unbindEye();else release();perfAdd(5,stageStart);
+    }
+    if(pair) {
+        stageStart=perfNow();
+        if(!vr_xr_complete_pair())die("paired eye completion without two waited images");
+        if(dump)captureCompletedPair();
+        vr_xr_release(0);vr_xr_release(1);perfAdd(5,stageStart);
     }
     if(checkStereo) {
         /* Reverse the eye order, then repeat it normally, without a native
@@ -401,6 +528,7 @@ void VR_RenderRace(int tick) {
 void VR_ApplyCamera(int **camera) {
     R_EndBatch();
     if(eye<0 || identity)return;
+    depthNear=vr_depth_near(g_farClipFloat);
     memcpy(eyeCamera,current,sizeof(eyeCamera));
     RenderCamera *rc=(RenderCamera*)eyeCamera,*a=(RenderCamera*)previous,*b=(RenderCamera*)current;
     float t=clockState.alpha;
@@ -451,9 +579,19 @@ void VR_ApplyCamera(int **camera) {
 }
 void VR_SkyBegin(void) { VR_Layer(2); }
 void VR_SkyEnd(void) { VR_Layer(0); }
+float VR_LerpWorldDepth(float a,float b,float t) {
+    if(!depthReversed || !VR_EyeActive() || layer!=0)return a+(b-a)*t;
+    /* CPU screen clipping must interpolate the eventual window depth, not
+     * the old linear camera depth. UV/fog interpolation remains native. */
+    if(a>=depthNear && b>=depthNear)
+        return (float)(1.0/((1.0-t)/(double)a+t/(double)b));
+    float da=vr_depth_map(a,depthNear),db=vr_depth_map(b,depthNear);
+    return vr_depth_unmap(da+(db-da)*t,depthNear);
+}
 void VR_EmitVertex(const RenderVertex *v) {
     float w=v->rhw>0?1/v->rhw:1,x=v->sx,y=v->sy,z=v->sz;
     if(!identity && layer==0) {
+        if(depthReversed)z=vr_depth_map(z,depthNear);
         VRVec p={(x-g_screenCenterX)*w/g_projScaleXCurrent,(g_screenCenterY-y)*w/g_projScaleY,-w};
         float nx,ny;vr_project_cached(p,eyeProjection,&nx,&ny);x=(nx+1)*320;y=(1-ny)*240;
     } else if(!identity && layer==1) {
@@ -474,6 +612,7 @@ void VR_EmitVertex(const RenderVertex *v) {
         float nx,ny;vr_project_cached(direction,eyeProjection,&nx,&ny);
         x=(nx+1)*320;y=(1-ny)*240;
     }
+    if(depthReversed && layer!=0)z=1-z;
     glVertex4f(x*w,y*w,z*w,w);
 }
 int VR_Present(void) {
