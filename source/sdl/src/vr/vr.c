@@ -9,6 +9,7 @@
 #include <string.h>
 #include "vr_xr.h"
 #include "vr_input.h"
+#include "vr_water.h"
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
@@ -48,6 +49,7 @@ static float roll,rollCos=1,rollSin;
 static float skyBasis[9];
 static int hudDepthStarted;
 static int trackFloat=1,hudDepth=1,skyRotation=1;
+static int waterSurfaceEnabled=1;
 static VRProjection eyeProjection;
 static VRVec hudCenter;
 static VRQuat hudOrientation,eyeInverse;
@@ -279,6 +281,8 @@ void VR_ConfigureAutoRace(void) {
     fprintf(stderr,"[vr] fixture track=%d weather_config=%d requested_tod=%d race_type=%d\n",g_trackId,g_weatherConfig,g_timeOfDay+1,g_raceType);
 }
 int VR_Init(void) {
+    waterSurfaceEnabled=!(getenv("SONICR_VR_WATER_SURFACE") && !strcmp(getenv("SONICR_VR_WATER_SURFACE"),"0"));
+    fprintf(stderr,"[vr] water_surface=%d (SONICR_VR_WATER_SURFACE=0 disables)\n",waterSurfaceEnabled);
     trackFloat=!(getenv("SONICR_VR_TRACK_FLOAT") && !strcmp(getenv("SONICR_VR_TRACK_FLOAT"),"0"));
     hudDepth=!(getenv("SONICR_VR_HUD_DEPTH") && !strcmp(getenv("SONICR_VR_HUD_DEPTH"),"0"));
     skyRotation=!(getenv("SONICR_VR_SKY_ROTATION") && !strcmp(getenv("SONICR_VR_SKY_ROTATION"),"0"));
@@ -342,6 +346,8 @@ int VR_Init(void) {
         }
         fprintf(stderr,"[vr-diag] synthetic yaw=%.1f tick=%d output=%s; OpenXR disabled\n",diagYaw/0.01745329251994f,dumpTick,dumpDir);
     }
+    R_ResetState();
+    if(waterSurfaceEnabled)vr_water_init();
     SDL_GL_SetSwapInterval(0);initialized=1;atexit(VR_Shutdown);
     return 1;
 }
@@ -356,6 +362,7 @@ void VR_Shutdown(void) {
     if(!diagnostic)vr_xr_shutdown();
     glBindFramebuffer(GL_FRAMEBUFFER,0);
     glDeleteFramebuffers(1,&framebuffer);glDeleteRenderbuffers(2,depth);
+    vr_water_shutdown();
     glDeleteTextures(2,diagTexture);glDeleteTextures(1,&menuTexture);
 }
 static int begin(void) {
@@ -705,6 +712,20 @@ int VR_DrawPanorama(int tpage,float phase,float horizon) {
 }
 void VR_SkyBegin(void) { VR_Layer(2); }
 void VR_SkyEnd(void) { VR_Layer(0); }
+void VR_WaterSurface(void) {
+    if(!waterSurfaceEnabled || !VR_EyeActive())return;
+    /* The native caller brackets reflection and water in the legacy sky
+     * layer. Water vertices are camera-space world geometry, so render them
+     * with the cached world projection/reverse depth, then restore that layer
+     * before the caller continues its sky pass. VR_Layer closes each boundary. */
+    int oldLayer=layer;
+    VR_Layer(0);
+    RenderCamera *camera=(RenderCamera*)eyeCamera;
+    vr_water_draw((float*)(eyeCamera+0x22),
+        (VRVec){camera->camFloatX,camera->camFloatY,camera->camFloatZ},
+        (unsigned)g_totalFrames,g_weatherType==WEATHER_SNOW,g_farClipFloat);
+    VR_Layer(oldLayer);
+}
 float VR_LerpWorldDepth(float a,float b,float t) {
     if(!depthReversed || !VR_EyeActive() || layer!=0)return a+(b-a)*t;
     /* CPU screen clipping must interpolate the eventual window depth, not

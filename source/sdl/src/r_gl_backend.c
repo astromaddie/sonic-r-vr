@@ -55,7 +55,7 @@ extern void GL_SetTpageRGBA8(int tpage, unsigned char *rgba);
  * ===================================================================== */
 
 typedef struct {
-    int          textureId;    /* tpage index, or -1 for untextured */
+    int          textureId;    /* tpage, -1 untextured, -2 external VR GL object */
     R_BlendMode  blendMode;
     int          depthTest;
     R_DepthFunc  depthFunc;
@@ -71,6 +71,12 @@ typedef struct {
 
 static R_StateSnapshot s_desired;
 static R_StateSnapshot s_current;
+#if SONICR_VR
+/* Preserve the 60-byte public/diagnostic state snapshot layout. External GL
+ * names use textureId=-2 and are tracked beside the snapshot. */
+static unsigned s_desiredTextureObject,s_currentTextureObject;
+static unsigned s_textureObjectStack[4];
+#endif
 
 /* State stack for R_PushState / R_PopState */
 #define R_STATE_STACK_DEPTH 4
@@ -178,6 +184,7 @@ static uint32_t s_batchColor;
 static int s_batchColorValid;
 static R_StateSnapshot s_batchState;
 static unsigned char s_batchFilter;
+static unsigned s_batchTextureObject;
 void R_EndBatch(void)
 {
     if (!s_batchOpen) return;
@@ -242,7 +249,18 @@ void R_FlushState(void)
     /* Texture binding — skip if tpage unchanged.
      * Dirty-texture uploads still happen even on a cache hit (the tpage
      * data changed, not the binding). */
-    if (s_desired.textureId != s_current.textureId) {
+    int textureChanged=s_desired.textureId != s_current.textureId;
+#if SONICR_VR
+    if(!textureChanged && s_desired.textureId==-2)
+        textureChanged=s_desiredTextureObject!=s_currentTextureObject;
+#endif
+    if (textureChanged) {
+#if SONICR_VR
+        if(s_desired.textureId==-2) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D,s_desiredTextureObject);
+        } else
+#endif
         if (s_desired.textureId < 0) {
             glDisable(GL_TEXTURE_2D);
         } else {
@@ -261,6 +279,9 @@ void R_FlushState(void)
             }
         }
         s_current.textureId = s_desired.textureId;
+#if SONICR_VR
+        s_currentTextureObject=s_desired.textureId==-2?s_desiredTextureObject:0;
+#endif
     }
     else if (s_desired.textureId >= 0 && s_desired.textureId < 52) {
         /* Same tpage, but check if pixel data was updated */
@@ -402,7 +423,18 @@ void R_FlushState(void)
 void R_SetTexture(int tpageIndex)
 {
     s_desired.textureId = tpageIndex;
+#if SONICR_VR
+    s_desiredTextureObject=0;
+#endif
 }
+
+#if SONICR_VR
+void R_SetTextureObject(unsigned int textureObject)
+{
+    s_desired.textureId=textureObject?-2:-1;
+    s_desiredTextureObject=textureObject;
+}
+#endif
 
 void R_SetBlendMode(R_BlendMode mode)
 {
@@ -492,7 +524,11 @@ void R_DisableScissor(void)
 void R_PushState(void)
 {
     if (s_stackDepth < R_STATE_STACK_DEPTH) {
-        s_stateStack[s_stackDepth++] = s_desired;
+        s_stateStack[s_stackDepth] = s_desired;
+#if SONICR_VR
+        s_textureObjectStack[s_stackDepth]=s_desiredTextureObject;
+#endif
+        s_stackDepth++;
     }
 }
 
@@ -500,6 +536,9 @@ void R_PopState(void)
 {
     if (s_stackDepth > 0) {
         s_desired = s_stateStack[--s_stackDepth];
+#if SONICR_VR
+        s_desiredTextureObject=s_textureObjectStack[s_stackDepth];
+#endif
     }
 }
 
@@ -518,6 +557,9 @@ void R_ResetState(void)
 {
     R_EndBatch();
     s_desired = s_defaults;
+#if SONICR_VR
+    s_desiredTextureObject=s_currentTextureObject=s_batchTextureObject=0;
+#endif
     /* Force full re-sync on next R_FlushState by invalidating current.
      * Can't use plain memset(0xFF) because 0xFFFFFFFF == -1, which matches
      * s_defaults.textureId — so textureId would appear "unchanged" and
@@ -587,19 +629,26 @@ void R_DrawTriFan(const RenderVertex *v, int count)
     VR_TraceDraw(v,count,&s_desired,sizeof(s_desired));
     if (s_vrBatching && VR_EyeActive()) {
         int tp=s_desired.textureId;
-        int textured=tp>=0 && tp<52;
-        unsigned char filter=textured ? s_tpageFilter[tp] : 0;
-        if (textured && !filter) filter=(unsigned char)(s_desired.filter+1);
+        int externalTexture=tp==-2;
+        int textured=externalTexture || (tp>=0 && tp<52);
+        unsigned char filter=0;
+        if(tp>=0 && tp<52) {
+            filter=s_tpageFilter[tp];
+            if(!filter)filter=(unsigned char)(s_desired.filter+1);
+        }
         /* Keep only adjacent compatible primitives together. Snapshot desired
          * state, not s_current: the latter intentionally ignores cull requests.
          * A dirty tpage must upload before vertices using its new contents. */
         if (!s_batchOpen || memcmp(&s_batchState,&s_desired,sizeof(s_desired)) ||
-            filter!=s_batchFilter || (textured && s_glTextureDirty[tp])) {
+            filter!=s_batchFilter ||
+            (externalTexture && s_batchTextureObject!=s_desiredTextureObject) ||
+            (!externalTexture && textured && s_glTextureDirty[tp])) {
             R_FlushState();
             s_batchArrays=s_vrClientArrays;
             if (!s_batchArrays) glBegin(GL_TRIANGLES);
             s_batchOpen=1;s_batchVertices=0;s_batchColorValid=0;
             s_batchState=s_desired;s_batchFilter=filter;
+            s_batchTextureObject=externalTexture?s_desiredTextureObject:0;
         }
         /* Exactly the original fan's triangle/vertex order, including its
          * provoking vertex. Transform immediately with the current eye/layer. */
@@ -660,7 +709,13 @@ void R_DrawQuad2DSolid(float x0, float y0, float x1, float y1,
 {
     /* Temporarily force untextured rendering */
     int savedTex = s_desired.textureId;
+#if SONICR_VR
+    unsigned savedTextureObject=s_desiredTextureObject;
+#endif
     s_desired.textureId = -1;
+#if SONICR_VR
+    s_desiredTextureObject=0;
+#endif
 
     float rhw = (z > 0.0f) ? (1.0f / z) : 1.0f;
     float farSafe = (g_farClipFloat > 0.0f) ? g_farClipFloat : 1.0f;
@@ -675,6 +730,9 @@ void R_DrawQuad2DSolid(float x0, float y0, float x1, float y1,
 
     /* Restore previous texture state */
     s_desired.textureId = savedTex;
+#if SONICR_VR
+    s_desiredTextureObject=savedTextureObject;
+#endif
 }
 
 /* =====================================================================

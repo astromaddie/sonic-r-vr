@@ -62,7 +62,7 @@ ${CC:-cc} -Os -std=c11 -DSONICR_VR=1 -DSONICR_SDL -DRenderHUD=Production_RenderH
 ${CC:-cc} -Os -std=c11 -D_POSIX_C_SOURCE=200809L -DSONICR_VR=1 -DSONICR_SDL \
  -Wno-deprecated-declarations -ffunction-sections -fdata-sections \
  -I"$test_build" -I"${OPENXR_INCLUDE:-/opt/openxr/include}" $(sdl2-config --cflags) \
- -Isource/sdl/src -Isource/sdl/src/platform tests/vr/test_pose_render.c "$test_build/legacy_track.o" "$test_build/hud.o" source/sdl/src/render_track_d3d.c source/sdl/src/render_helpers.c source/sdl/src/camera.c source/sdl/src/pause_menu.c source/sdl/src/sky_render.c source/sdl/src/input/input.c \
+ -Isource/sdl/src -Isource/sdl/src/platform tests/vr/test_pose_render.c "$test_build/legacy_track.o" "$test_build/hud.o" source/sdl/src/render_track_d3d.c source/sdl/src/vr/vr_water.c source/sdl/src/render_helpers.c source/sdl/src/camera.c source/sdl/src/pause_menu.c source/sdl/src/sky_render.c source/sdl/src/input/input.c \
  source/sdl/src/globals.c source/sdl/src/globals_extra.c \
  $strip_flags -lm -o "$test_build/pose-render"
 if "$test_build/pose-render" "$test_build" 2>"$test_build/diagnostic.log"; then :; else

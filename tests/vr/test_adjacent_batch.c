@@ -11,6 +11,7 @@
 static int legacyRenderer,fixtureArrays;
 void *g_tpagePixelBuf[52];
 int g_tpageWidth[52],g_tpageHeight[52];
+int g_farClipTimes8;
 PrecipParticle g_precipParticles[128];
 GroundParticle g_particleSlots[16];
 typedef struct {
@@ -27,6 +28,10 @@ static float color[4],uv[2];static Output fan[128];static unsigned fanCount,tria
 static Event events[32768],reference[32768];static unsigned eventCount,referenceCount,begins,logicalFans;
 static unsigned nextTexture=1,reads,swaps,releaseCount,beginSlots[3],colorCalls,flushCalls,finishCalls;
 static unsigned arrayDraws;
+static GLState textureAttribState;static int textureAttribPushed;
+static GLuint waterTextureId;static unsigned waterUploadCount,waterUploadLevels,waterDeleteCount;
+static uint64_t waterUploadHash=1469598103934665603ULL;
+static int waterBaseMin=255,waterBaseMax;
 static int raceProtocol,raceOwned[2],raceDone[2],raceCaptures;
 static unsigned pairFinishes,attachedTexture,captureMask,raceEyeFlush[2],raceRenders[3];
 static void outside(void){assert(!primitive);}
@@ -75,6 +80,8 @@ void glTexCoord2fv(const GLfloat *p){glTexCoord2f(p[0],p[1]);}
 void glEnable(GLenum e){outside();gpu.enabled|=enableBit(e);}
 void glDisable(GLenum e){outside();gpu.enabled&=~enableBit(e);}
 GLboolean glIsEnabled(GLenum e){outside();return (gpu.enabled&enableBit(e))!=0;}
+void glPushAttrib(GLbitfield bits){outside();assert(bits==GL_TEXTURE_BIT && !textureAttribPushed);textureAttribState=gpu;textureAttribPushed=1;}
+void glPopAttrib(void){outside();assert(textureAttribPushed);gpu=textureAttribState;textureAttribPushed=0;}
 void glBindTexture(GLenum t,GLuint id){outside();assert(t==GL_TEXTURE_2D && id<256);gpu.texture=id;}
 void glTexParameteri(GLenum t,GLenum p,GLint v){outside();assert(t==GL_TEXTURE_2D);Texture *a=textures+gpu.texture;switch(p){case GL_TEXTURE_MIN_FILTER:a->min=v;break;case GL_TEXTURE_MAG_FILTER:a->mag=v;break;case GL_TEXTURE_WRAP_S:a->wrapS=v;break;case GL_TEXTURE_WRAP_T:a->wrapT=v;break;default:assert(0);}}
 void glTexEnvi(GLenum t,GLenum p,GLint v){outside();assert(t==GL_TEXTURE_ENV);switch(p){case GL_TEXTURE_ENV_MODE:gpu.env=v;break;case GL_COMBINE_RGB:gpu.rgb=v;break;case GL_SOURCE0_RGB:gpu.source0=v;break;case GL_SOURCE1_RGB:gpu.source1=v;break;case GL_OPERAND0_RGB:gpu.operand0=v;break;case GL_OPERAND1_RGB:gpu.operand1=v;break;default:assert(0);}}
@@ -96,8 +103,21 @@ void glFinish(void){outside();finishCalls++;}
 void glGenTextures(GLsizei n,GLuint *ids){outside();for(int i=0;i<n;i++)ids[i]=nextTexture++;assert(nextTexture<256);}
 void glGenFramebuffers(GLsizei n,GLuint *ids){outside();for(int i=0;i<n;i++)ids[i]=5+i;}
 void glGenRenderbuffers(GLsizei n,GLuint *ids){outside();for(int i=0;i<n;i++)ids[i]=8+i;}
-void glDeleteTextures(GLsizei n,const GLuint *ids){outside();(void)n;(void)ids;}
-void glTexImage2D(GLenum t,GLint l,GLint f,GLsizei w,GLsizei h,GLint b,GLenum ef,GLenum et,const GLvoid *p){outside();(void)t;(void)l;(void)f;(void)w;(void)h;(void)b;(void)ef;(void)et;(void)p;textures[gpu.texture].generation++;record(3,NULL);}
+void glDeleteTextures(GLsizei n,const GLuint *ids){outside();for(int i=0;i<n;i++)if(ids[i]==waterTextureId)waterDeleteCount++;}
+void glTexImage2D(GLenum t,GLint l,GLint f,GLsizei w,GLsizei h,GLint b,GLenum ef,GLenum et,const GLvoid *p){
+ outside();(void)t;(void)f;(void)b;(void)ef;(void)et;textures[gpu.texture].generation++;
+ if(w==64 && h==64 && p && f==GL_RGBA){waterTextureId=gpu.texture;waterUploadCount=waterUploadLevels=0;waterUploadHash=1469598103934665603ULL;waterBaseMin=255;waterBaseMax=0;}
+ if(gpu.texture==waterTextureId && p){
+  assert(l>=0 && l<=6 && w==(64>>l) && h==w);waterUploadCount++;waterUploadLevels|=1u<<l;
+  const unsigned char *bytes=p;
+  for(int i=0;i<w*h;i++)for(int c=0;c<4;c++){
+   unsigned char value=bytes[4*i+c];waterUploadHash=(waterUploadHash^value)*1099511628211ULL;
+   if(l==0 && c==0){if(value<waterBaseMin)waterBaseMin=value;if(value>waterBaseMax)waterBaseMax=value;}
+   if(c==3)assert(value==255);
+  }
+ }
+ record(3,NULL);
+}
 void glTexSubImage2D(GLenum t,GLint l,GLint x,GLint y,GLsizei w,GLsizei h,GLenum f,GLenum ty,const GLvoid *p){outside();(void)t;(void)l;(void)x;(void)y;(void)w;(void)h;(void)f;(void)ty;(void)p;textures[gpu.texture].generation++;record(3,NULL);}
 void glCopyTexImage2D(GLenum t,GLint l,GLenum f,GLint x,GLint y,GLsizei w,GLsizei h,GLint b){outside();(void)t;(void)l;(void)f;(void)x;(void)y;(void)w;(void)h;(void)b;}
 void glBindFramebuffer(GLenum t,GLuint f){outside();(void)t;gpu.framebuffer=f;}
@@ -315,8 +335,211 @@ static void arrayStorageTest(void){
  }
  fixtureArrays=0;puts("client arrays: 10500 vertices, exact intra-fan overflow splits at3072/6144/9216, inherited attributes restored, client pointers/enables/unit/buffers restored, native/identity bypass");
 }
+_Static_assert(sizeof(R_StateSnapshot)==60,"water must preserve the CPU draw-stream state schema");
+static float waterCamera[3],waterView[16];
+static VRFov waterFov;
+static uint64_t hashWaterEvents(void){
+ uint64_t h=1469598103934665603ULL;
+ for(unsigned i=0;i<eventCount;i++)h=hashBytes(h,events+i,sizeof events[i]);
+ return h;
+}
+static uint64_t hashWaterGeometry(void){
+ uint64_t h=1469598103934665603ULL;
+ for(unsigned i=0;i<eventCount;i++){
+  Output *v=&events[i].vertex;
+  h=hashBytes(h,v->xyzw,sizeof(float)*2);
+  h=hashBytes(h,v->xyzw+3,sizeof(float));
+  h=hashBytes(h,v->color,sizeof v->color);
+  h=hashBytes(h,v->uv,sizeof v->uv);
+ }
+ return h;
+}
+static unsigned waterPass(int e,int reverse,unsigned tick,int snow,float cameraY,
+                          float yaw,float pitch,float roll,float shiftX,float shiftZ,
+                          int arrays,int batch){
+ fixtureArrays=arrays;modeRace=1;identity=0;layer=0;perspectiveDepth=reverse;
+ earlyFlushDraws=0;g_farClipFloat=88064;g_farClipTimes8=88064;g_farClipDepth=1000;
+ eyes[0].fov=(VRFov){atanf(-1.2f),atanf(.8f),atanf(.85f),atanf(-.65f)};
+ eyes[1].fov=(VRFov){atanf(-.8f),atanf(1.2f),atanf(.85f),atanf(-.65f)};
+ R_SetVRBatching(batch);R_SetVRClientArrays(arrays);R_SetVREarlyFlush(0);
+ target(e);BeginFrame();
+
+ memset(eyeCamera,0,sizeof eyeCamera);
+ RenderCamera *camera=(RenderCamera*)eyeCamera;
+ camera->camFloatX=-2300.0f+(e?2.56f:-2.56f)+shiftX;
+ camera->camFloatY=cameraY;
+ camera->camFloatZ=-2962.0f+shiftZ;
+ waterCamera[0]=camera->camFloatX;waterCamera[1]=cameraY;waterCamera[2]=camera->camFloatZ;
+ float base[9]={1,0,0,0,1,0,0,0,1},basis[9];
+ VRQuat qy={0,sinf(yaw*.5f),0,cosf(yaw*.5f)};
+ VRQuat qp={sinf(pitch*.5f),0,0,cosf(pitch*.5f)};
+ VRQuat qr={0,0,sinf(roll*.5f),cosf(roll*.5f)};
+ VRQuat q=vr_mul(vr_mul(qy,qp),qr);
+ vr_compose_basis(base,q,basis);
+ float *matrix=(float*)(eyeCamera+0x22);
+ for(int r=0;r<4;r++)for(int c=0;c<4;c++)matrix[r*4+c]=(r<3 && c<3)?basis[r*3+c]:(r==3 && c==3?1:0);
+ memcpy(waterView,matrix,sizeof waterView);waterFov=eyes[e].fov;
+ g_totalFrames=(int)tick;g_weatherType=snow?WEATHER_SNOW:WEATHER_CLEAR;
+
+ /* Give the pass a non-default caller state and foreign client pointers. */
+ R_SetTexture(1);R_SetBlendMode(R_BLEND_ADDITIVE);R_SetDepthTest(1);
+ R_SetDepthFunc(R_DEPTH_LESS);R_SetDepthWrite(1);R_SetTexEnv(R_TEXENV_ADD_SIGNED);
+ R_SetAlphaTest(1);R_SetCullMode(R_CULL_BACK);R_SetScissor(2,3,600,470);
+ R_FlushState();GLState incoming=gpu;
+ int beforeDepth=0,beforeWrite=0,beforeFunc=0,beforeBlend=0,beforeAlpha=0;float beforeRef=0;
+ R_DebugGetState(&beforeDepth,&beforeWrite,&beforeFunc,&beforeBlend,&beforeAlpha,&beforeRef);
+ ClientState initialClient;memset(&client,0,sizeof client);client.unit=GL_TEXTURE0+3;client.buffer=77;client.enabled=1|4;
+ client.vertex=(ArrayPointer){2,GL_SHORT,8,(void*)16,66};
+ client.color=(ArrayPointer){3,GL_UNSIGNED_BYTE,4,(void*)32,55};
+ client.tex[0]=(ArrayPointer){3,GL_SHORT,12,(void*)48,44};
+ client.tex[3]=(ArrayPointer){4,GL_FLOAT,16,(void*)64,33};initialClient=client;
+ unsigned oldUploads=waterUploadCount,oldNextTexture=nextTexture,oldReads=reads,oldFinishes=finishCalls,oldFlushes=flushCalls;
+ eventCount=0;
+ /* Exercise the VR-facing entry sequence inside RenderHUD's legacy sky scope. */
+ VR_SkyBegin();assert(layer==2);
+ VR_WaterSurface();
+ assert(layer==2); /* water temporarily used world cached projection/depth */
+ VR_SkyEnd();assert(layer==0);
+ assert(!textureAttribPushed && !clientPushed && !s_batchOpen);
+ assert(!memcmp(&client,&initialClient,sizeof client));
+ assert(s_desired.textureId==1 && !s_desiredTextureObject);
+ assert(!memcmp(&gpu,&incoming,sizeof gpu));
+ int depth=0,write=0,func=0,blend=0,alpha=0;float ref=0;
+ R_DebugGetState(&depth,&write,&func,&blend,&alpha,&ref);
+ assert(depth==beforeDepth && write==beforeWrite && func==beforeFunc && blend==beforeBlend && alpha==beforeAlpha && ref==beforeRef);
+ if(cameraY<=0)assert(eventCount==0);else assert(eventCount>0);
+ if(eventCount){
+  assert(waterTextureId && waterTextureId<256);
+  float phase=snow?0:(float)(tick&2047);
+  float l=tanf(waterFov.left),r=tanf(waterFov.right),u=tanf(waterFov.up),d=tanf(waterFov.down);
+  for(unsigned i=0;i<eventCount;i++){
+   assert(events[i].type==1);Output *v=&events[i].vertex;
+   assert(v->state.texture==waterTextureId && v->texture.min==GL_LINEAR_MIPMAP_LINEAR);
+   assert(v->texture.mag==GL_LINEAR && v->texture.wrapS==GL_REPEAT && v->texture.wrapT==GL_REPEAT);
+   assert(v->state.depth==GL_FALSE && v->state.depthFunc==(reverse?GL_GEQUAL:GL_LEQUAL));
+   assert(v->state.clipDepth==(reverse?GL_ZERO_TO_ONE:GL_NEGATIVE_ONE_TO_ONE));
+   assert(v->state.depthFormat==(reverse?GL_DEPTH_COMPONENT32F:GL_DEPTH_COMPONENT24));
+   assert((v->state.enabled&7)==7 && v->state.src==GL_SRC_ALPHA && v->state.dst==GL_ONE_MINUS_SRC_ALPHA);
+   assert(v->state.env==GL_MODULATE && v->color[3]>=0 && v->color[3]<=0.34f);
+   float depthZ=v->xyzw[3];assert(isfinite(depthZ) && depthZ>=1.0f);
+   float expectedDepth=reverse?vr_depth_map(depthZ/g_farClipFloat,vr_depth_near(g_farClipFloat)):depthZ/g_farClipFloat;
+   assert(fabsf(v->xyzw[2]/depthZ-expectedDepth)<3e-6f);
+   float nx=(v->xyzw[0]/depthZ)/320-1,ny=1-(v->xyzw[1]/depthZ)/240;
+   float cx=depthZ*(nx*(r-l)+r+l)*.5f,cy=depthZ*(ny*(u-d)+u+d)*.5f;
+   float wx=waterCamera[0]+cx*waterView[0]+cy*waterView[1]+depthZ*waterView[2];
+   float wy=waterCamera[1]+cx*waterView[4]+cy*waterView[5]+depthZ*waterView[6];
+   float wz=waterCamera[2]+cx*waterView[8]+cy*waterView[9]+depthZ*waterView[10];
+   assert(fabsf(wy)<0.08f);
+   assert(fabsf(v->uv[0]-(wx/512+phase/2048))<0.0002f);
+   assert(fabsf(v->uv[1]-(wz/512-phase/1024))<0.0002f);
+  }
+  assert(!memcmp(color,events[eventCount-1].vertex.color,sizeof color));
+  assert(!memcmp(uv,events[eventCount-1].vertex.uv,sizeof uv));
+ }
+ R_FlushState();assert(!memcmp(&gpu,&incoming,sizeof gpu));
+ assert(oldUploads==waterUploadCount && oldNextTexture==nextTexture && oldReads==reads && oldFinishes==finishCalls && oldFlushes==flushCalls);
+ return eventCount;
+}
+static int sampleWaterWorld(float worldX,float worldZ,float *u,float *v){
+ float dx=worldX-waterCamera[0],dy=-waterCamera[1],dz=worldZ-waterCamera[2];
+ float cx=dx*waterView[0]+dy*waterView[4]+dz*waterView[8];
+ float cy=dx*waterView[1]+dy*waterView[5]+dz*waterView[9];
+ float cz=dx*waterView[2]+dy*waterView[6]+dz*waterView[10];
+ if(cz<1)return 0;
+ float nx,ny;vr_project((VRVec){cx,cy,-cz},waterFov,&nx,&ny);
+ float x=(nx+1)*320,y=(1-ny)*240;
+ for(unsigned i=0;i+2<eventCount;i+=3){
+  Output *a=&events[i].vertex,*b=&events[i+1].vertex,*c=&events[i+2].vertex;
+  float ax=a->xyzw[0]/a->xyzw[3],ay=a->xyzw[1]/a->xyzw[3];
+  float bx=b->xyzw[0]/b->xyzw[3],by=b->xyzw[1]/b->xyzw[3];
+  float cxp=c->xyzw[0]/c->xyzw[3],cyp=c->xyzw[1]/c->xyzw[3];
+  float den=(by-cyp)*(ax-cxp)+(cxp-bx)*(ay-cyp);if(fabsf(den)<1e-6f)continue;
+  float wa=((by-cyp)*(x-cxp)+(cxp-bx)*(y-cyp))/den;
+  float wb=((cyp-ay)*(x-cxp)+(ax-cxp)*(y-cyp))/den,wc=1-wa-wb;
+  if(wa<0 || wb<0 || wc<0)continue;
+  wa/=a->xyzw[3];wb/=b->xyzw[3];wc/=c->xyzw[3];float sum=wa+wb+wc;
+  *u=(wa*a->uv[0]+wb*b->uv[0]+wc*c->uv[0])/sum;
+  *v=(wa*a->uv[1]+wb*b->uv[1]+wc*c->uv[1])/sum;return 1;
+ }
+ return 0;
+}
+static void waterSurfaceRegression(void){
+ setup(1,1);BeginFrame();R_FlushState();
+ /* Texture allocation must close a pending native eye batch before raw GL
+  * binding/upload calls, and restore its tracked binding afterwards. */
+ R_SetTexture(1);draw(4);assert(s_batchOpen);GLState initial=gpu;
+ unsigned pendingBefore=eventCount;
+ unsigned startNext=nextTexture,startDeletes=waterDeleteCount;
+ vr_water_init();GLuint textureId=waterTextureId;unsigned uploads=waterUploadCount,levels=waterUploadLevels;
+ uint64_t textureHash=waterUploadHash;
+ assert(!s_batchOpen && eventCount>pendingBefore);
+ assert(textureId && nextTexture==startNext+1 && uploads==7 && levels==127);
+ assert(textureHash==0x300a251ce8690b12ULL); /* Exact 64x64+mip bytes from approved f2491a8 material. */
+ assert(waterBaseMin>=31 && waterBaseMax<=111 && waterBaseMax-waterBaseMin>60);
+ assert(textures[textureId].min==GL_LINEAR_MIPMAP_LINEAR && textures[textureId].mag==GL_LINEAR);
+ assert(textures[textureId].wrapS==GL_REPEAT && textures[textureId].wrapT==GL_REPEAT);
+ assert(!memcmp(&gpu,&initial,sizeof gpu) && !textureAttribPushed);
+ unsigned afterCreate=nextTexture;vr_water_init();
+ assert(waterTextureId==textureId && waterUploadCount==uploads && nextTexture==afterCreate);
+
+ unsigned nearClipped=0;uint64_t animated[2][2]={{0}},geometryBase=0;
+ for(int arrays=0;arrays<2;arrays++)for(int batch=0;batch<2;batch++)for(int reverse=0;reverse<2;reverse++){
+  unsigned count=waterPass(0,reverse,80,0,226,0,0,0,0,0,arrays,batch);assert(count>0);
+  uint64_t geometry=hashWaterGeometry();animated[arrays][reverse]=hashWaterEvents();
+  for(unsigned i=0;i<eventCount;i++)if(fabsf(events[i].vertex.xyzw[3]-1.0f)<0.0001f)nearClipped++;
+  unsigned repeated=waterPass(0,reverse,80,0,226,0,0,0,0,0,arrays,batch);
+  assert(repeated==count && hashWaterEvents()==animated[arrays][reverse]);
+  assert(hashWaterGeometry()==geometry);
+  if(!arrays && !batch && !reverse)geometryBase=geometry;
+  if(!arrays && !batch && reverse)assert(geometry==geometryBase);
+ }
+ assert(nearClipped>0);
+
+ uint64_t moving0[2],moving1[2];
+ unsigned count=waterPass(0,1,90,0,226,0,0,0,0,0,1,1);assert(count>0);
+ float leftUV[2];assert(sampleWaterWorld(-2300,-1462,leftUV,leftUV+1));moving0[0]=hashWaterEvents();
+ waterPass(1,1,90,0,226,0,0,0,0,0,1,1);float rightUV[2];
+ assert(sampleWaterWorld(-2300,-1462,rightUV,rightUV+1));moving0[1]=hashWaterEvents();
+ assert(fabsf(leftUV[0]-rightUV[0])<0.0001f && fabsf(leftUV[1]-rightUV[1])<0.0001f);
+ waterPass(0,1,90,0,226,0,0,0,0,0,1,1);assert(hashWaterEvents()==moving0[0]);
+ waterPass(1,1,90,0,226,0,0,0,0,0,1,1);assert(hashWaterEvents()==moving0[1]);
+ waterPass(0,1,90,0,226,0,0,0,40,60,1,1);float movedUV[2];
+ assert(sampleWaterWorld(-2300,-1462,movedUV,movedUV+1));
+ assert(fabsf(leftUV[0]-movedUV[0])<0.0001f && fabsf(leftUV[1]-movedUV[1])<0.0001f);
+ uint64_t flowing=hashWaterEvents();waterPass(0,1,91,0,226,0,0,0,0,0,1,1);
+ assert(hashWaterEvents()!=flowing);
+ uint64_t snow=hashWaterEvents();waterPass(0,1,90,1,226,0,0,0,0,0,1,1);
+ snow=hashWaterEvents();waterPass(0,1,91,1,226,0,0,0,0,0,1,1);
+ assert(hashWaterEvents()==snow);
+ assert(waterPass(0,1,90,0,0,0,0,0,0,0,1,1)==0);
+ assert(waterPass(0,1,90,0,-1,0,0,0,0,0,1,1)==0);
+ for(int i=-8;i<=8;i++)assert(waterPass(0,1,90,0,226,i*.07f,.11f,i*.05f,0,0,1,1)>0);
+ /* Shutdown closes any final native batch before deleting its owned texture. */
+ eventCount=0;R_SetTexture(1);draw(4);assert(s_batchOpen);
+ vr_water_shutdown();assert(!s_batchOpen && eventCount==6 && gpu.texture==s_glTextures[1] && gpu.texture!=textureId);
+ vr_water_shutdown();assert(waterDeleteCount==startDeletes+1);
+ initialized=0;
+
+ /* The opt-out is sampled by VR_Init once; changing its environment value
+  * after startup cannot change the current session or allocate the texture. */
+ setenv("SONICR_VR_DIAGNOSTIC","1",1);unsetenv("SONICR_VR_OFFHEAD_RENDER");unsetenv("SONICR_VR_OFFHEAD_NEUTRAL");
+ unsetenv("SONICR_VR_CLIENT_ARRAYS");unsetenv("SONICR_VR_EARLY_FLUSH_DRAWS");
+ unsetenv("SONICR_VR_PAIRED_COMPLETE");unsetenv("SONICR_VR_DEPTH");unsetenv("SONICR_VR_OFFHEAD_RUNTIME_FOV");
+ setenv("SONICR_VR_WATER_SURFACE","0",1);unsigned uploadsBeforeOptout=waterUploadCount;
+ assert(VR_Init() && !waterSurfaceEnabled && waterUploadCount==uploadsBeforeOptout);
+ setenv("SONICR_VR_WATER_SURFACE","1",1);eventCount=0;VR_WaterSurface();assert(eventCount==0);
+ VR_Shutdown();
+ unsetenv("SONICR_VR_WATER_SURFACE");unsigned previousId=waterTextureId;
+ assert(VR_Init() && waterSurfaceEnabled && waterTextureId!=previousId && waterUploadCount==7);
+ setenv("SONICR_VR_WATER_SURFACE","0",1);
+ assert(waterPass(0,1,90,0,226,0,0,0,0,0,1,1)>0);
+ VR_Shutdown();
+ printf("production water: 64x64 mip texture hash=%016llx; immediate/client-array and batching modes; reverse/legacy depth; animation/world anchor/stereo repeat/pose/near clip/underwater/snow/state/resource/optout pass\n",(unsigned long long)textureHash);
+}
 int main(int argc,char **argv){
- assert(argc==2);dumpDir=argv[1];arrayStorageTest();
+ assert(argc==2);dumpDir=argv[1];
+ if(getenv("SONICR_TEST_WATER_ONLY")){waterSurfaceRegression();return 0;}
+ arrayStorageTest();
  for(fixtureArrays=0;fixtureArrays<2;fixtureArrays++){
  colorTest();earlyFlushTest();
  for(int mode=0;mode<3;mode++){
@@ -369,5 +592,6 @@ int main(int argc,char **argv){
  dumpDir=argv[1];
  for(fixtureArrays=0;fixtureArrays<2;fixtureArrays++)for(int paired=0;paired<2;paired++)for(int captures=0;captures<2;captures++)for(int reverse=0;reverse<2;reverse++)for(int early=0;early<2;early++)raceProtocolTest(paired,captures,reverse,early);
  puts("race completion: actual render loop default/opt-out, no normal readbacks, paired captures after shared finish before either release passed");
+ waterSurfaceRegression();
  return 0;
 }

@@ -33,6 +33,7 @@ ${CC:-cc} -Os -std=c11 -D_POSIX_C_SOURCE=200809L -DSONICR_VR=1 -DSONICR_SDL \
  -Wno-deprecated-declarations -ffunction-sections -fdata-sections \
  -I"$test_build" -I"${OPENXR_INCLUDE:-/opt/openxr/include}" $(sdl2-config --cflags) \
  -Isource/sdl/src -Isource/sdl/src/platform tests/vr/test_world_depth.c source/sdl/src/render_track_d3d.c \
+ source/sdl/src/vr/vr_water.c \
  source/sdl/src/globals.c source/sdl/src/globals_extra.c \
  $strip_flags -lm -o "$test_build/world-depth"
 "$test_build/world-depth" "$test_build"

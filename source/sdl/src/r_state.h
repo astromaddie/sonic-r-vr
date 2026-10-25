@@ -16,6 +16,11 @@ typedef enum { R_CULL_NONE, R_CULL_BACK, R_CULL_FRONT } R_CullMode;
 /* Bind a texture page for subsequent geometry. -1 = untextured. */
 void R_SetTexture(int tpageIndex);
 
+#if SONICR_VR
+/* Bind a context-owned GL texture object through the tracked eye renderer. */
+void R_SetTextureObject(unsigned int textureObject);
+#endif
+
 /* Set blend mode. */
 void R_SetBlendMode(R_BlendMode mode);
 

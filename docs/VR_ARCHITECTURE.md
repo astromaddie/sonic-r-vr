@@ -180,11 +180,23 @@ ground particle renderer may clear a culled slot only on the canonical pass; an 
 
 Water is the upstream port's animated, tinted panorama reflection plus bottom
 fill, with ambient `GENERAL/PLOP2.RAW` ring decals loaded by `LoadPlopSprites`.
-It has no separate continuous water-surface texture. The SDL reflection pass
-now explicitly scopes opaque/modulate/depth-write-off state, followed by its
-existing additive tint, and restores the caller's state just as the DC path
-does. This does not introduce a new water material. Baseline native and eye
-Resort Island captures already show the reflection and blue tint.
+The native renderer has no separate continuous surface texture. VR eye passes
+overlay a world-anchored animated ripple material after the reflection and
+before the playfield/track mask. Its 64×64 procedural texture is created once
+per VR context with a complete mip chain; world-XZ UVs use `g_totalFrames` for
+one shared phase across the eyes, and snow freezes the phase. The translucent
+surface never writes depth, uses the cached asymmetric eye projection and
+reverse-depth mapping through the regular renderer, and preserves the incoming
+tracked state. `SONICR_VR_WATER_SURFACE=0` disables it at initialization for a
+same-build A/B against the native reflection.
+
+`tests/vr/run-water-surface.sh` exercises the production water module through
+the production GL backend in immediate/client-array and legacy/reversed-depth
+modes. It checks the original texture/mip appearance parameters, resource
+lifetime, animation and freeze behavior, world-space UV anchoring across eye
+passes and camera poses, near clipping, underwater omission, reversed depth
+comparison, state restoration and the cached opt-out. These CPU checks do not
+establish final GPU appearance or wearer comfort.
 
 `tests/vr/run-ground-projection.sh` calls the five production ground emitters
 under its historical integer-camera control across 81 camera positions and both

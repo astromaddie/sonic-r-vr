@@ -12,6 +12,7 @@
 #include "r_draw.h"
 
 extern void SubmitCharacterSprite(Player *,int,int);
+void VR_WaterSurface(void) {}
 extern void RenderItemSprite(Player *,int,int);
 extern void RenderPlayerItemEffect(Player *,int,int,int);
 extern void RenderHiddenSubEntry(int x,int y,int z);
