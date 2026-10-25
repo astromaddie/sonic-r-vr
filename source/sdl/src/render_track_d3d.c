@@ -819,6 +819,10 @@ static void RenderWaterBandSWRipple(int vpIdx)
     static const float __attribute__((unused)) vHalfHeight[9] = { 0.0f, 0.03125f, 0.0625f, 0.09375f, 0.125f,
                                           0.15625f, 0.1875f, 0.21875f, 0.25f };      /* 0x4FC628 */
 
+    int fadeReflection=0;
+#if SONICR_VR
+    fadeReflection=VR_ReflectionFade();
+#endif
     int tpage = g_tpageCount;
 
     if (g_tpageStateArray[tpage] != 4) {
@@ -1011,6 +1015,19 @@ static void RenderWaterBandSWRipple(int vpIdx)
      * (GL has no vertex-color lift). 0xFF808080 = neutral retail halving. */
     const unsigned int colWhite = 0xFF7882DCu;
 #endif
+    if(fadeReflection) {
+        /* Native corner-texel base under the whole reflection, followed by
+         * its existing teal tint. Fade the sky image into that same color;
+         * the separately drawn animated world-water surface stays intact. */
+        float l=g_clipLeft-1,r=g_clipRight+1,b=g_clipBottom+1;
+        RenderVertex base[4]={
+            {l,baseY,WATER_VERT_Z,WATER_VERT_RHW,colWhite,0,0,0},
+            {r,baseY,WATER_VERT_Z,WATER_VERT_RHW,colWhite,0,.001f,0},
+            {r,b,WATER_VERT_Z,WATER_VERT_RHW,colWhite,0,.001f,.001f},
+            {l,b,WATER_VERT_Z,WATER_VERT_RHW,colWhite,0,0,.001f}};
+        R_SetDepthTest(0);R_SetAlphaTest(0);EmitSkyWaterQuad(base);
+        R_SetBlendMode(R_BLEND_ALPHA);
+    }
     for (;;) {
         float uBase = uvU[bandIdx];
         /* V is linear from vBase+0.25 (horizon) down to vBase across the
@@ -1054,6 +1071,18 @@ static void RenderWaterBandSWRipple(int vpIdx)
 #else
             unsigned int tintTop = 0, tintBot = 0;
 #endif
+
+            unsigned colorTop=colWhite,colorBottom=colWhite;
+            if(fadeReflection) {
+                /* Smoothstep reaches the native base at the lower edge;
+                 * keep the horizon's reflection fully present. */
+                float t0=fmaxf(0,((float)row/rowCount-.2f)/.8f);
+                float t1=fmaxf(0,((float)(row+1)/rowCount-.2f)/.8f);
+                unsigned a0=(unsigned)lrintf(255*(1-t0*t0*(3-2*t0)));
+                unsigned a1=(unsigned)lrintf(255*(1-t1*t1*(3-2*t1)));
+                colorTop=(colWhite&0xffffffu)|(a0<<24);
+                colorBottom=(colWhite&0xffffffu)|(a1<<24);
+            }
 
             /* Band 6 is the half-width fold — only 4 of its 8 substrips
              * exist, so it spans U uBase..uBase+0.25. */
@@ -1099,10 +1128,10 @@ static void RenderWaterBandSWRipple(int vpIdx)
                 }
 
                 RenderVertex quad[4] = {
-                    { xTL, rowTopY, WATER_VERT_Z, WATER_VERT_RHW, colWhite, tintTop, uL, vT },
-                    { xTR, rowTopY, WATER_VERT_Z, WATER_VERT_RHW, colWhite, tintTop, uR, vT },
-                    { xBR, rowBotY, WATER_VERT_Z, WATER_VERT_RHW, colWhite, tintBot, uR, vB },
-                    { xBL, rowBotY, WATER_VERT_Z, WATER_VERT_RHW, colWhite, tintBot, uL, vB },
+                    { xTL, rowTopY, WATER_VERT_Z, WATER_VERT_RHW, colorTop, tintTop, uL, vT },
+                    { xTR, rowTopY, WATER_VERT_Z, WATER_VERT_RHW, colorTop, tintTop, uR, vT },
+                    { xBR, rowBotY, WATER_VERT_Z, WATER_VERT_RHW, colorBottom, tintBot, uR, vB },
+                    { xBL, rowBotY, WATER_VERT_Z, WATER_VERT_RHW, colorBottom, tintBot, uL, vB },
                 };
                 EmitSkyWaterQuad(quad);
             }
@@ -1131,6 +1160,7 @@ static void RenderWaterBandSWRipple(int vpIdx)
     float right  = (float)(g_clipRight + 1);
     float bottom = (float)(g_clipBottom + 1);
 
+    if(fadeReflection)R_SetBlendMode(R_BLEND_NONE);
     float fillTop = baseY + reflHeight;
     float third   = (bottom - fillTop) * 0.33333333f;
 #ifdef SONICR_DC

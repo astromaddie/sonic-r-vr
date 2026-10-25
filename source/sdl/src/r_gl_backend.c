@@ -468,6 +468,11 @@ void R_SetFilter(R_FilterMode mode)
 
 /* Per-tpage filter pin. Takes priority over the global R_SetFilter value;
  * applied to the texture object at bind time by GL_ApplyTpageFilter. */
+#if SONICR_VR
+int R_GetTpageFilter(int tpage) {
+    return tpage>=0 && tpage<52 ? (int)s_tpageFilter[tpage]-1 : -1;
+}
+#endif
 void R_SetTpageFilter(int tpage, R_FilterMode mode)
 {
     if (tpage >= 0 && tpage < 52) {

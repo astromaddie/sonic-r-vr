@@ -18,6 +18,10 @@ extern int g_footShadowVerts[],g_renderStateBlock[];
 int g_particleOwner[16],g_particleAge[16],g_qtEdgeIdx,g_qtSurfIdx;
 GroundParticle g_particleSlots[16];
 void VR_WaterSurface(void) {}
+int VR_ReflectionFade(void) { return 0; }
+/* The full comfort fixture owns the new eye-only fade branch. */
+void R_SetDepthTest(int d) { (void)d;assert(0); }
+void R_SetAlphaTest(int d) { (void)d;assert(0); }
 extern void SetupCharacterShadowQuad(Player *);
 static int active=1,repeat=1,count;
 static RenderVertex draws[4096][5];static int sizes[4096];

@@ -19,6 +19,8 @@ void R_SetTexture(int tpageIndex);
 #if SONICR_VR
 /* Bind a context-owned GL texture object through the tracked eye renderer. */
 void R_SetTextureObject(unsigned int textureObject);
+/* -1 when unpinned; used to restore a scoped eye-only filter override. */
+int R_GetTpageFilter(int tpage);
 #endif
 
 /* Set blend mode. */

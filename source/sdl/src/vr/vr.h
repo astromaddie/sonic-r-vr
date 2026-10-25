@@ -38,5 +38,6 @@ int VR_DrawPanorama(int tpage, float phase, float horizon);
 void VR_SkyBegin(void);
 void VR_SkyEnd(void);
 void VR_WaterSurface(void);
+int VR_ReflectionFade(void);
 #endif
 #endif

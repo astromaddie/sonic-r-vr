@@ -13,6 +13,10 @@
 
 extern void SubmitCharacterSprite(Player *,int,int);
 void VR_WaterSurface(void) {}
+int VR_ReflectionFade(void) { return 0; }
+/* The full comfort fixture owns the new eye-only fade branch. */
+void R_SetDepthTest(int d) { (void)d;assert(0); }
+void R_SetAlphaTest(int d) { (void)d;assert(0); }
 extern void RenderItemSprite(Player *,int,int);
 extern void RenderPlayerItemEffect(Player *,int,int,int);
 extern void RenderHiddenSubEntry(int x,int y,int z);

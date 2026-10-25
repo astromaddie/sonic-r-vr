@@ -221,6 +221,7 @@ static int uvAt(float x,float y,float out[2]){
  return found;
 }
 static void skyAtlasTest(void){
+ skyFilter=0; /* Exact old atlas coordinates remain available for causal A/B. */
  float largest=0;
  for(int track=1;track<=5;track++)for(int mirror=0;mirror<2;mirror++){
   poseCamera(0,0);g_trackId=track;g_mirrorMode=mirror;g_tpageCount=0;g_tpageStateArray[0]=4;g_parallaxWidth=1664;g_parallaxExtraX=128;g_viewportArray[6]=512;
@@ -235,7 +236,7 @@ static void skyAtlasTest(void){
   /* At the native optical axis the 32/1664-turn chord sag is <0.057 texel. */
   assert(delta<.065f);
  }
- g_mirrorMode=0;printf("native-FOV neutral atlas tracks1..5/mirror, including Emerald rim: maximum chord texel delta %.6f\n",largest);
+ g_mirrorMode=0;skyFilter=1;printf("native-FOV neutral atlas tracks1..5/mirror, including Emerald rim: maximum chord texel delta %.6f\n",largest);
 }
 static void statusTest(void){
  poseCamera(8,0);g_projScaleXCurrent=g_projScaleY=512;g_tpageParallax1=g_tpageCharBase=g_tpageObjects=0;g_tpageStateArray[0]=4;
@@ -276,8 +277,11 @@ static void fixtureTest(const char *directory){
    if(bad==1){unsetenv("SONICR_VR_DIAGNOSTIC");unsetenv("SONICR_VR_OFFHEAD_RENDER");}
    if(bad==2)unsetenv("SONICR_VR_FIXTURE_POSE");
    if(bad==3){unsetenv("SONICR_VR_FIXTURE_POSE");unsetenv("SONICR_VR_FIXTURE_PAUSE_TICK");unsetenv("SONICR_VR_DIAGNOSTIC");setenv("SONICR_VR_DUMP_STREAM","bad",1);}
-   assert(VR_Init());assert(fixturePose && fixturePauseTick==90 && trackFloat && hudDepth && skyRotation);VR_Shutdown();
-   setenv("SONICR_VR_TRACK_FLOAT","0",1);setenv("SONICR_VR_HUD_DEPTH","0",1);setenv("SONICR_VR_SKY_ROTATION","0",1);assert(VR_Init());assert(!trackFloat && !hudDepth && !skyRotation);VR_Shutdown();_exit(0);
+   assert(VR_Init());assert(fixturePose && fixturePauseTick==90 && trackFloat && hudDepth && skyRotation && chaseSmooth && skyFilter && reflectionFade);VR_Shutdown();
+   setenv("SONICR_VR_CHASE_SMOOTH","0",1);setenv("SONICR_VR_SKY_FILTER","0",1);setenv("SONICR_VR_REFLECTION_FADE","0",1);
+   setenv("SONICR_VR_TRACK_FLOAT","0",1);setenv("SONICR_VR_HUD_DEPTH","0",1);setenv("SONICR_VR_SKY_ROTATION","0",1);assert(VR_Init());assert(!trackFloat && !hudDepth && !skyRotation && !chaseSmooth && !skyFilter && !reflectionFade);
+   setenv("SONICR_VR_CHASE_SMOOTH","1",1);setenv("SONICR_VR_SKY_FILTER","1",1);setenv("SONICR_VR_REFLECTION_FADE","1",1);
+   assert(!chaseSmooth && !skyFilter && !reflectionFade);VR_Shutdown();_exit(0);
   }
   int status;assert(waitpid(p,&status,0)==p && WIFEXITED(status));assert((WEXITSTATUS(status)!=0)==(bad>0 && bad<4));
  }
@@ -357,4 +361,8 @@ static void decalTrackTest(void){
  }
  printf("decal/full track: near-plane road covered samples=%u native/identity/paired-old exact streams=%u reversed/repeated eyes=%u\n",nearSamples,controls,repeats);
 }
+
+#ifndef COMFORT_LIBRARY
 int main(int argc,char **argv){assert(argc==2);fullTrackTest();decalTrackTest();nativeTrackTest();trackEdgesTest();pauseTest();statusTest();skyTest();skyAtlasTest();fixtureTest(argv[1]);return 0;}
+
+#endif

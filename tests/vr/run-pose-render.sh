@@ -55,6 +55,21 @@ c+=function('hud_full.c','DrawMovingPickupShadow','2a853ee12f8793f20a62a2818bf1e
 pathlib.Path(sys.argv[1]).write_text(a+'\n'+b+'\n'+c)
 pathlib.Path(sys.argv[1]).with_name('legacy_track.c').write_text(check(read('render_track_sdl.c'),'7bf415ea94ca25cf3e1bfa235e2a89b0c938e20e50195e6c5559382ba8010017'))
 PYPOSE
+if [ "${SONICR_TEST_COMFORT_ONLY:-0}" = 1 ]; then
+python3 - "$test_build/legacy_camera.h" <<'PYCAMERA'
+import hashlib,os,pathlib,subprocess,sys
+root=os.environ.get('SONICR_TEST_CAMERA_BASELINE')
+if root and not pathlib.Path(root).is_absolute():
+    raise SystemExit('SONICR_TEST_CAMERA_BASELINE must be an absolute baseline source/sdl/src directory')
+source=(pathlib.Path(root)/'vr/vr.c').read_text() if root else subprocess.check_output(['git','show','d298137:source/sdl/src/vr/vr.c'],text=True)
+a=source.index('void VR_ApplyCamera(');b=source.index('void VR_HudBegin',a)
+body=source[a:b]
+assert hashlib.sha256(body.encode()).hexdigest()=='13f3fcf4eeae0d7e9b1878ca643e0c2d5f6d412c248b318bcd47942773cd3715'
+pathlib.Path(sys.argv[1]).write_text(body.replace('void VR_ApplyCamera(', 'static void Baseline_ApplyCamera(',1))
+PYCAMERA
+fi
+fixture_source=tests/vr/test_pose_render.c
+if [ "${SONICR_TEST_COMFORT_ONLY:-0}" = 1 ]; then fixture_source=tests/vr/test_comfort.c; fi
 ${CC:-cc} -Os -std=c11 -DSONICR_VR=1 -DSONICR_SDL -DRenderTrackD3D=Legacy_RenderTrackD3D \
  -ffunction-sections -fdata-sections -Isource/sdl/src -c "$test_build/legacy_track.c" -o "$test_build/legacy_track.o"
 ${CC:-cc} -Os -std=c11 -DSONICR_VR=1 -DSONICR_SDL -DRenderHUD=Production_RenderHUD \
@@ -62,7 +77,7 @@ ${CC:-cc} -Os -std=c11 -DSONICR_VR=1 -DSONICR_SDL -DRenderHUD=Production_RenderH
 ${CC:-cc} -Os -std=c11 -D_POSIX_C_SOURCE=200809L -DSONICR_VR=1 -DSONICR_SDL \
  -Wno-deprecated-declarations -ffunction-sections -fdata-sections \
  -I"$test_build" -I"${OPENXR_INCLUDE:-/opt/openxr/include}" $(sdl2-config --cflags) \
- -Isource/sdl/src -Isource/sdl/src/platform tests/vr/test_pose_render.c "$test_build/legacy_track.o" "$test_build/hud.o" source/sdl/src/render_track_d3d.c source/sdl/src/vr/vr_water.c source/sdl/src/render_helpers.c source/sdl/src/camera.c source/sdl/src/pause_menu.c source/sdl/src/sky_render.c source/sdl/src/input/input.c \
+ -Isource/sdl/src -Isource/sdl/src/platform "$fixture_source" "$test_build/legacy_track.o" "$test_build/hud.o" source/sdl/src/render_track_d3d.c source/sdl/src/vr/vr_water.c source/sdl/src/render_helpers.c source/sdl/src/camera.c source/sdl/src/pause_menu.c source/sdl/src/sky_render.c source/sdl/src/input/input.c \
  source/sdl/src/globals.c source/sdl/src/globals_extra.c \
  $strip_flags -lm -o "$test_build/pose-render"
 if "$test_build/pose-render" "$test_build" 2>"$test_build/diagnostic.log"; then :; else
@@ -70,6 +85,7 @@ if "$test_build/pose-render" "$test_build" 2>"$test_build/diagnostic.log"; then 
  exit 1
 fi
 
+if [ "${SONICR_TEST_COMFORT_ONLY:-0}" = 1 ]; then exit 0; fi
 python3 - "$test_build/stream.jsonl" <<'PYJSON'
 import json,sys,math
 rows=[json.loads(line) for line in open(sys.argv[1])]

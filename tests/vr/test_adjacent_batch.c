@@ -172,6 +172,7 @@ void RenderHUD(void){if(raceProtocol)raceRenders[eye<0?0:eye+1]++;BeginFrame();d
 void SetViewportClipRect(int *cam){assert(cam);}
 #endif
 static void setup(int enabled,int mode){
+ havePresentation=0;chaseTime=0;
  if(depthReversed)setDepthMode(0);
  R_SetVREarlyFlush(0);earlyFlushDraws=0;memset(&gpu,0,sizeof gpu);gpu.clipDepth=GL_NEGATIVE_ONE_TO_ONE;gpu.clearDepth=1;
  perspectiveDepth=0;s_vrDepthReversed=0;clipControl=testClipControl;memset(textures,0,sizeof textures);memset(color,0,sizeof color);memset(uv,0,sizeof uv);

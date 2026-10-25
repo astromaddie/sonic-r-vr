@@ -47,6 +47,12 @@ static int depthW[2],depthH[2];
 static int previous[50],current[50],eyeCamera[50],haveCamera;
 static float roll,rollCos=1,rollSin;
 static float skyBasis[9];
+static int chaseSmooth=1,skyFilter=1,reflectionFade=1;
+static int older[50],havePresentation;
+static RenderCamera presentation;
+static float chaseVelocity[2];
+static int64_t chaseTime;
+static int chaseContext[8];
 static int hudDepthStarted;
 static int trackFloat=1,hudDepth=1,skyRotation=1;
 static int waterSurfaceEnabled=1;
@@ -281,6 +287,10 @@ void VR_ConfigureAutoRace(void) {
     fprintf(stderr,"[vr] fixture track=%d weather_config=%d requested_tod=%d race_type=%d\n",g_trackId,g_weatherConfig,g_timeOfDay+1,g_raceType);
 }
 int VR_Init(void) {
+    chaseSmooth=setting("SONICR_VR_CHASE_SMOOTH",1,0,1);
+    skyFilter=setting("SONICR_VR_SKY_FILTER",1,0,1);
+    reflectionFade=setting("SONICR_VR_REFLECTION_FADE",1,0,1);
+    fprintf(stderr,"[vr] chase_smooth=%d sky_filter=%d reflection_fade=%d\n",chaseSmooth,skyFilter,reflectionFade);
     waterSurfaceEnabled=!(getenv("SONICR_VR_WATER_SURFACE") && !strcmp(getenv("SONICR_VR_WATER_SURFACE"),"0"));
     fprintf(stderr,"[vr] water_surface=%d (SONICR_VR_WATER_SURFACE=0 disables)\n",waterSurfaceEnabled);
     trackFloat=!(getenv("SONICR_VR_TRACK_FLOAT") && !strcmp(getenv("SONICR_VR_TRACK_FLOAT"),"0"));
@@ -384,7 +394,7 @@ static int begin(void) {
         for(int e=0;e<2;e++)eyes[e].pose=(VRPose){vr_mul(q,(VRQuat){0,sinf((e?1:-1)*.015f),0,cosf(.015f)}),vr_rotate(q,(VRVec){e?.032f:-.032f,0,0})};
     }
     int focused=diagnostic || vr_xr_focused();
-    if(focused && !wasFocused){anchored=0;haveCamera=0;focusSince=0;}
+    if(focused && !wasFocused){anchored=0;haveCamera=havePresentation=0;focusSince=0;}
     wasFocused=focused;
     if(!focused)focusSince=0;
     int ready=diagnostic || vr_xr_offhead() || vr_anchor_ready(focused,displayTime,&focusSince);
@@ -410,7 +420,7 @@ void VR_RaceStart(void) {
         if(!loaded)die("invalid or missing Island fixture replay");
         fprintf(stderr,"[vr] fixture_replay=Island pads=%u countdown=60 demo_mode=%d native_chase=1\n",replayCount,g_demoMode);
     }
-    clockState=(VRClock){0};haveCamera=0;ticks=frames=extraPasses=0;presented=0;
+    clockState=(VRClock){0};haveCamera=havePresentation=0;chaseTime=0;ticks=frames=extraPasses=0;presented=0;
     modeRace=1;anchored=0;focusSince=0;
     perfWindow=perfNow();perfLastFrame=0;perfFrames=perfTicks=0;perfMaxInterval=0;
     memset(perfMs,0,sizeof perfMs);memset(perfWeatherMs,0,sizeof perfWeatherMs);
@@ -429,7 +439,7 @@ int VR_RaceFrame(void) {
     for(;;) {
         int visible=begin();if(visible<0)return -1;
         int tick=vr_clock_step(&clockState,displayTime,visible);
-        if(clockState.cut)haveCamera=0;
+        if(clockState.cut)haveCamera=havePresentation=0;
         if(!visible){vr_xr_end(0);continue;}
         frames++;
         if(perfEnabled) {
@@ -512,6 +522,68 @@ static void captureCompletedPair(void) {
 static int cameraSlot(void) {
     return (g_isNetworkGame || g_netSessionActive)?(unsigned short)g_localPlayerIndex:0;
 }
+/* A presentation follower must not invent a path through track geometry.
+ * Re-time only the latest native position segment. Its incoming tangent is
+ * the previous segment projected onto this one (bounded to keep it monotone).
+ * Collinear joins preserve speed; corners/reversals deliberately lose that
+ * guarantee rather than overshoot the native segment or add spatial lag. */
+static float chasePositionFraction(float t) {
+    RenderCamera *o=(RenderCamera*)older,*a=(RenderCamera*)previous,*b=(RenderCamera*)current;
+    VRVec d={b->camFloatX-a->camFloatX,b->camFloatY-a->camFloatY,b->camFloatZ-a->camFloatZ};
+    VRVec p={a->camFloatX-o->camFloatX,a->camFloatY-o->camFloatY,a->camFloatZ-o->camFloatZ};
+    float length2=d.x*d.x+d.y*d.y+d.z*d.z;
+    float m=length2>1e-8f?fmaxf(0,fminf(3,(p.x*d.x+p.y*d.y+p.z*d.z)/length2)):1;
+    return t+(m-1)*t*(1-t)*(1-t);
+}
+static void chaseAngle(float *angle,float *velocity,float target,float dt,float rate) {
+    /* Critically damped game-camera spring, integrated at <= 240 Hz. The
+     * velocity and acceleration ceilings apply to artificial rotation only.
+     * Pitch is deliberately slower than heading; no headset state enters. */
+    int steps=(int)ceilf(dt*240);if(steps<1)steps=1;
+    float h=dt/steps;
+    for(int i=0;i<steps;i++) {
+        float error=remainderf(target-*angle,6.28318530718f);
+        float acceleration=64*error-16*(*velocity);
+        acceleration=fmaxf(-rate*4,fminf(rate*4,acceleration));
+        float before=*velocity;
+        *velocity=fmaxf(-rate,fminf(rate,*velocity+acceleration*h));
+        *angle=remainderf(*angle+(before+*velocity)*(.5f*h),6.28318530718f);
+    }
+}
+static void updatePresentationCamera(int tick,int *native) {
+    int slot=cameraSlot();
+    int context[8]={g_trackId,g_mirrorMode,slot,g_introCountdown>30,
+        g_postRaceCameraMode,g_demoMode,g_playerBase?g_playerBase[slot].loopMode:0, g_demoMode?g_flyoverWpIdx[slot]:0};
+    int cut=!haveCamera || !havePresentation || memcmp(context,chaseContext,sizeof context)!=0;
+    if(tick) {
+        memcpy(older,previous,sizeof older);
+        memcpy(previous,current,sizeof current);memcpy(current,native,sizeof current);
+        RenderCamera *a=(RenderCamera*)previous,*b=(RenderCamera*)current;
+        float dx=b->camFloatX-a->camFloatX,dy=b->camFloatY-a->camFloatY,dz=b->camFloatZ-a->camFloatZ;
+        /* Discontinuous teleports/scripted cuts, not ordinary heading wrap.
+         * 640 game units is over two normal chase distances in one tick. */
+        if(dx*dx+dy*dy+dz*dz>640*640)cut=1;
+        haveCamera=1;
+    }
+    float dt=chaseTime?(displayTime-chaseTime)*1e-9f:0;
+    if(dt<0 || dt>.1f)cut=1;
+    if(cut){memcpy(previous,current,sizeof current);memcpy(older,current,sizeof current);}
+    RenderCamera *a=(RenderCamera*)previous,*b=(RenderCamera*)current;
+    float t=fixturePose?1:clockState.alpha;
+    float p=vr_angle(a->yawFloat,b->yawFloat,t),y=vr_angle(a->pitchFloat,b->pitchFloat,t);
+    if(cut || !chaseSmooth || fixturePose) {
+        presentation=*b;presentation.yawFloat=p;presentation.pitchFloat=y;
+        chaseVelocity[0]=chaseVelocity[1]=0;
+    } else if(dt>0) {
+        chaseAngle(&presentation.yawFloat,chaseVelocity,p,dt,1.57079632679f);
+        chaseAngle(&presentation.pitchFloat,chaseVelocity+1,y,dt,3.14159265359f);
+    }
+    float positionT=chaseSmooth && !fixturePose?chasePositionFraction(t):t;
+    presentation.camFloatX=a->camFloatX+(b->camFloatX-a->camFloatX)*positionT;
+    presentation.camFloatY=a->camFloatY+(b->camFloatY-a->camFloatY)*positionT;
+    presentation.camFloatZ=a->camFloatZ+(b->camFloatZ-a->camFloatZ)*positionT;
+    memcpy(chaseContext,context,sizeof context);chaseTime=displayTime;havePresentation=1;
+}
 void VR_RenderRace(int tick) {
     if(tick)perfAdd(1,perfSimStart);
     double stageStart=perfNow();
@@ -520,9 +592,8 @@ void VR_RenderRace(int tick) {
         streamFile=fopen(streamPath,"w");if(!streamFile)die("DUMP_STREAM open");streamTick=ticks+1;
         for(int e=0;e<2;e++)fprintf(streamFile,"{\"view\":%d,\"fov\":[%.9g,%.9g,%.9g,%.9g],\"pose\":[%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]}\n",e,eyes[e].fov.left,eyes[e].fov.right,eyes[e].fov.up,eyes[e].fov.down,eyes[e].pose.q.x,eyes[e].pose.q.y,eyes[e].pose.q.z,eyes[e].pose.q.w,eyes[e].pose.p.x,eyes[e].pose.p.y,eyes[e].pose.p.z);
     }
+    updatePresentationCamera(tick,native);
     if(tick) {
-        memcpy(previous,current,sizeof(current));memcpy(current,native,sizeof(current));
-        if(!haveCamera)memcpy(previous,current,sizeof(current));haveCamera=1;
         repeat=0;layer=0;eye=-1;
         /* Canonical pass owns all game-facing render side effects exactly once
          * per tick (weather visibility, wrong-way warning). Also desktop mirror. */
@@ -608,12 +679,16 @@ void VR_ApplyCamera(int **camera) {
         fprintf(stderr,"[vr-diag] presentation tick=%d frame=%d alpha=%.6f chase=(%.3f,%.3f,%.3f) previous=(%.3f,%.3f,%.3f) current=(%.3f,%.3f,%.3f)\n",
             ticks,frames,t,a->camFloatX+(b->camFloatX-a->camFloatX)*t,a->camFloatY+(b->camFloatY-a->camFloatY)*t,a->camFloatZ+(b->camFloatZ-a->camFloatZ)*t,
             a->camFloatX,a->camFloatY,a->camFloatZ,b->camFloatX,b->camFloatY,b->camFloatZ);
-    /* Native chase damping remains tick-owned; interpolate position and the
-     * shortest angle arc, rebuild the rigid basis, then add unfiltered tracking. */
+    /* Shared game-camera presentation is advanced before either eye. Tracking
+     * and each runtime FOV remain direct, including diagnostic repeat passes. */
     rc->camFloatX=a->camFloatX+(b->camFloatX-a->camFloatX)*t;
     rc->camFloatY=a->camFloatY+(b->camFloatY-a->camFloatY)*t;
     rc->camFloatZ=a->camFloatZ+(b->camFloatZ-a->camFloatZ)*t;
     float p=vr_angle(a->yawFloat,b->yawFloat,t),y=vr_angle(a->pitchFloat,b->pitchFloat,t);
+    if(havePresentation && chaseSmooth && !fixturePose) {
+        rc->camFloatX=presentation.camFloatX;rc->camFloatY=presentation.camFloatY;rc->camFloatZ=presentation.camFloatZ;
+        p=presentation.yawFloat;y=presentation.pitchFloat;
+    }
     float sp=sinf(p),cp=cosf(p),sy=sinf(y),cy=cosf(y);
     float base[9]={cy,sy*sp,-sy*cp, 0,cp,sp, sy,-sp*cy,cp*cy};
     if(g_mirrorMode){base[0]=-base[0];base[6]=-base[6];}
@@ -675,8 +750,8 @@ int VR_DrawPanorama(int tpage,float phase,float horizon) {
      * Cache only authored geometry, never an eye's transformed vertices. */
     static RenderVertex mesh[52][7];
     static float savedPhase,savedHorizon;
-    static int valid,savedMirror;
-    if(!valid || phase!=savedPhase || horizon!=savedHorizon || savedMirror!=g_mirrorMode) {
+    static int valid,savedMirror,savedFilter;
+    if(!valid || phase!=savedPhase || horizon!=savedHorizon || savedMirror!=g_mirrorMode || savedFilter!=skyFilter) {
         const float uPair[14]={0,.5f,.5f,1,0,.5f,.5f,1,0,.5f,.5f,1,0,.25f};
         const float vBase[7]={0,0,.25f,.25f,.5f,.5f,.75f};
         int n=0;
@@ -689,6 +764,9 @@ int VR_DrawPanorama(int tpage,float phase,float horizon) {
                 if(g_mirrorMode){a=-a;b=-b;}
                 float u0=uPair[strip*2]+(uPair[strip*2+1]-uPair[strip*2])*part/pieces;
                 float u1=uPair[strip*2]+(uPair[strip*2+1]-uPair[strip*2])*(part+1)/pieces;
+                /* Keep bilinear taps within this packed atlas strip. Only
+                 * its outside edges need the half-texel guard. */
+                if(skyFilter){if(part==0)u0+=.5f/256;if(part==pieces-1)u1-=.5f/256;}
                 float vt=vBase[strip]+1.0f/256,vb=vBase[strip]+.25f-1.0f/256;
                 float ax=sinf(a),az=cosf(a),bx=sinf(b),bz=cosf(b);
                 mesh[n][0]=(RenderVertex){ax,horizon,az,1,VERTEX_WHITE,0,u0,vb};
@@ -700,16 +778,20 @@ int VR_DrawPanorama(int tpage,float phase,float horizon) {
                 mesh[n][6]=(RenderVertex){0,1,0,1,VERTEX_WHITE,0,0,0};
             }
         }
-        savedPhase=phase;savedHorizon=horizon;savedMirror=g_mirrorMode;valid=1;
+        savedPhase=phase;savedHorizon=horizon;savedMirror=g_mirrorMode;savedFilter=skyFilter;valid=1;
     }
     int oldLayer=layer;
+    int oldFilter=R_GetTpageFilter(tpage);
     R_PushState();VR_Layer(4);
-    R_SetTexture(tpage);R_SetFilter(R_FILTER_NEAREST);
-    R_SetDepthTest(0);R_SetDepthWrite(0);R_SetBlendMode(R_BLEND_NONE);R_SetTexEnv(R_TEXENV_MODULATE);
+    R_SetTpageFilter(tpage,skyFilter?R_FILTER_LINEAR:R_FILTER_NEAREST);
+    R_SetTexture(tpage);R_SetFilter(skyFilter?R_FILTER_LINEAR:R_FILTER_NEAREST);
+    R_SetAlphaTest(0);R_SetDepthTest(0);R_SetDepthWrite(0);R_SetBlendMode(R_BLEND_NONE);R_SetTexEnv(R_TEXENV_MODULATE);
     for(int i=0;i<52;i++){R_DrawQuad(mesh[i]);R_DrawTri(mesh[i]+4);}
+    if(oldFilter<0)R_ClearTpageFilter(tpage);else R_SetTpageFilter(tpage,(R_FilterMode)oldFilter);
     R_PopState();VR_Layer(oldLayer);
     return 1;
 }
+int VR_ReflectionFade(void) { return VR_EyeActive() && reflectionFade; }
 void VR_SkyBegin(void) { VR_Layer(2); }
 void VR_SkyEnd(void) { VR_Layer(0); }
 void VR_WaterSurface(void) {
@@ -800,7 +882,7 @@ int VR_Present(void) {
     /* All existing menu/logo/results pixels are preserved in one finite plane.
      * Refresh it at native cadence, but locate/render it at XR display cadence. */
     haveCamera=0;
-    if(modeRace){modeRace=0;anchored=0;focusSince=0;clockState=(VRClock){0};}
+    if(modeRace){modeRace=0;havePresentation=0;anchored=0;focusSince=0;clockState=(VRClock){0};}
     /* BeginFrame already calculated the native 4:3 viewport. Exclude the
      * drawable's letterbox/pillarbox bars when copying the menu panel. */
     int w=g_glBackingWidth,h=g_glBackingHeight;
