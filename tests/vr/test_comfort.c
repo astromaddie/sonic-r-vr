@@ -3,6 +3,9 @@
 #define COMFORT_LIBRARY 1
 #include "test_pose_render.c"
 #include "legacy_camera.h"
+typedef union { int words[50]; RenderCamera camera; } NativeCameraFixture;
+_Static_assert(sizeof(RenderCamera)<=sizeof(((NativeCameraFixture *)0)->words),
+ "native camera fixture must include the full production 50-int bank");
 
 static void resetChase(void) {
  setup(1,1);haveCamera=0;displayTime=1000000000;
@@ -31,17 +34,17 @@ static void cameraRegression(void) {
    displayTime=1000000000+(int64_t)llround(time*1e9);
    int tick=vr_clock_step(&clockState,displayTime,1);
    if(tick)lastTick++;
-   RenderCamera native=sampleNative(lastTick<0?0:lastTick,scene);
+   NativeCameraFixture native={0};native.camera=sampleNative(lastTick<0?0:lastTick,scene);
    /* Model d298137's original tick rule independently. Include no-tick
     * display frames and a mid-run camera-history invalidation. */
    if(count==100){haveCamera=0;expectedHaveCamera=0;}
    if(tick) {
     memcpy(expectedPrevious,expectedCurrent,sizeof expectedPrevious);
-    memcpy(expectedCurrent,&native,sizeof expectedCurrent);
+    memcpy(expectedCurrent,native.words,sizeof expectedCurrent);
     if(!expectedHaveCamera)memcpy(expectedPrevious,expectedCurrent,sizeof expectedPrevious);
     expectedHaveCamera=1;
    }
-   updateCameraHistory(tick,(int*)&native);
+   updateCameraHistory(tick,native.words);
    assert(!memcmp(previous,expectedPrevious,sizeof expectedPrevious));
    assert(!memcmp(current,expectedCurrent,sizeof expectedCurrent));
    assert(haveCamera==expectedHaveCamera);
@@ -67,8 +70,8 @@ static void cameraRegression(void) {
    scene?"intro-zoom":"wrap/reversal",schedule==0?"90Hz":schedule==1?"120Hz":"variable90/120",count);
  }
  /* FIXTURE_POSE1 keeps its historical exact-tick alpha bypass. */
- resetChase();fixturePose=1;clockState.alpha=.1f;RenderCamera native=sampleNative(20,0);
- updateCameraHistory(1,(int*)&native);eye=0;cacheEyeProjection();int *cam=current;int before[50];memcpy(before,current,sizeof before);
+ resetChase();fixturePose=1;clockState.alpha=.1f;NativeCameraFixture native={0};native.camera=sampleNative(20,0);
+ updateCameraHistory(1,native.words);eye=0;cacheEyeProjection();int *cam=current;int before[50];memcpy(before,current,sizeof before);
  Baseline_ApplyCamera(&cam);int baseline[50];memcpy(baseline,cam,sizeof baseline);
  memcpy(current,before,sizeof current);cam=current;VR_ApplyCamera(&cam);assert(!memcmp(baseline,cam,sizeof baseline));
  puts("FIXTURE_POSE1 exact-tick camera remains byte-exact to d298137");
@@ -76,7 +79,7 @@ static void cameraRegression(void) {
 static void skyTemporal(void) {
  double peak[2]={0},steps[2]={0};
  for(int filtered=0;filtered<2;filtered++) {
-  resetChase();skyFilter=filtered;RenderCamera native={0};updateCameraHistory(1,(int*)&native);
+  resetChase();skyFilter=filtered;NativeCameraFixture native={0};updateCameraHistory(1,native.words);
   g_tpageCount=0;g_tpageStateArray[0]=4;g_parallaxWidth=1664;g_parallaxExtraX=128;g_viewportArray[6]=512;
   float previousSample=0;
   for(int frame=0;frame<150;frame++) {
@@ -105,7 +108,7 @@ static void skyTemporal(void) {
  skyFilter=1;R_ClearTpageFilter(0);
 }
 static void reflectionTest(void) {
- resetChase();RenderCamera native={0};native.camFloatY=200;updateCameraHistory(1,(int*)&native);
+ resetChase();NativeCameraFixture native={0};native.camera.camFloatY=200;updateCameraHistory(1,native.words);
  eye=0;cacheEyeProjection();int *cam=current;VR_ApplyCamera(&cam);SetViewportClipRect(cam);
  g_tpageCount=0;g_tpageStateArray[0]=4;g_parallaxWidth=1664;g_parallaxExtraX=128;
  g_viewportHeight=g_screenHeight=480;g_numHumans=1;g_scissorEdge=SCISSOR_NONE;g_screenWidthFull=640;g_d3dSurfaceMode=4;
@@ -122,7 +125,7 @@ static void reflectionTest(void) {
  identity=0;eye=0;cacheEyeProjection();reflectionFade=1;
  for(int frame=0;frame<12;frame++) {
   /* The pre-race camera pitches and approaches the water. */
-  native.yawFloat=.6f-frame*.04f;native.camFloatY=200+frame*20;clockState.alpha=1;displayTime+=11111111;updateCameraHistory(1,(int*)&native);
+  native.camera.yawFloat=.6f-frame*.04f;native.camera.camFloatY=200+frame*20;clockState.alpha=1;displayTime+=11111111;updateCameraHistory(1,native.words);
   cam=current;VR_ApplyCamera(&cam);SetViewportClipRect(cam);ComputeParallaxAndPlayfieldState(0,cam);
   VR_SkyBegin();R_SetDepthWrite(1);R_SetDepthTest(1);R_SetAlphaTest(1);R_SetBlendMode(R_BLEND_ADDITIVE);
   R_StateSnapshot before=s_desired;
