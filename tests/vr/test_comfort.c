@@ -1,130 +1,82 @@
-/* Real presentation update -> VR_ApplyCamera -> sky/reflection producers ->
+/* Real native camera history -> VR_ApplyCamera -> sky/reflection producers ->
  * real GL emitter. The baseline camera is hash-checked d298137 source. */
 #define COMFORT_LIBRARY 1
 #include "test_pose_render.c"
 #include "legacy_camera.h"
 
 static void resetChase(void) {
- setup(1,1);haveCamera=havePresentation=0;chaseTime=0;displayTime=1000000000;
- fixturePose=0;chaseSmooth=1;clockState=(VRClock){0};anchorRotation=(VRQuat){0,0,0,1};anchor=(VRVec){0};
- g_trackId=1;g_mirrorMode=g_introCountdown=g_postRaceCameraMode=g_demoMode=0;
- memset(current,0,sizeof current);memset(previous,0,sizeof previous);memset(older,0,sizeof older);
+ setup(1,1);haveCamera=0;displayTime=1000000000;
+ fixturePose=0;clockState=(VRClock){0};anchorRotation=(VRQuat){0,0,0,1};anchor=(VRVec){0};
+ g_trackId=1;g_mirrorMode=0;
+ memset(current,0,sizeof current);memset(previous,0,sizeof previous);
  for(int e=0;e<2;e++){eyes[e].pose=(VRPose){{0,0,0,1},{0}};eyes[e].fov=(VRFov){-.9f,1,.95f,-.8f};}
 }
 static RenderCamera sampleNative(int tick,int scene) {
  float t=tick/30.0f;RenderCamera c={0};c.camFloatY=200;
- if(scene==0){ /* fast heading wrap and sudden reversal, translation corner */
+ if(scene==0){ /* heading wrap/reversal and a translation corner */
   c.pitchFloat=3.05f+(t<1?2.8f*t:t<2?2.8f-5.6f*(t-1):-2.8f);
   c.camFloatX=t<1?120*t:120;c.camFloatZ=t<1?0:120*(t-1);
- }else{ /* pre-race zoom with a decelerating native chase and pitch */
+ }else{ /* intro zoom and pitching native chase */
   float f=1-expf(-t*2);c.camFloatZ=1000*(1-f);c.camFloatY=200+200*(1-f);c.yawFloat=.7f*(1-f);c.pitchFloat=.3f*f;
  }
  return c;
 }
-static float matrixHeading(const RenderCamera *c) { const float *m=(const float*)((const int*)c+0x22);return atan2f(-m[2],m[10]); }
-typedef struct {double peakRate,peakAccel,travel;float finalHeading;} Motion;
-static Motion trajectory(int hz,int scene,int baseline) {
- resetChase();if(scene)g_introCountdown=100;
- double time=0,previousTime=0;int lastTick=-1,count=0;float lastHeading=0,lastRate=0;double lastDt=0;Motion result={0};
- while(time<3.5) {
-  /* Variable-rate path alternates 90/120 Hz; no wall-clock input. */
-  double dt=hz?1.0/hz:1.0/(count%2?90:120);time+=dt;
-  displayTime=1000000000+(int64_t)llround(time*1e9);
-  int tick=vr_clock_step(&clockState,displayTime,1);
-  if(tick)lastTick++;RenderCamera native=sampleNative(lastTick,scene);
-  updatePresentationCamera(tick,(int*)&native);
-  float heading=0;
-  for(int pass=0;pass<4;pass++) {
-   int e=(int[]){1,0,0,1}[pass];eye=e;cacheEyeProjection();int *cam=current;
-   RenderCamera saved=presentation;float velocities[2];memcpy(velocities,chaseVelocity,sizeof velocities);
-   if(baseline)Baseline_ApplyCamera(&cam);else VR_ApplyCamera(&cam);
-   assert(!memcmp(&saved,&presentation,sizeof saved) && !memcmp(velocities,chaseVelocity,sizeof velocities));
-   if(pass==0)heading=matrixHeading((RenderCamera*)cam);else assert(fabsf(vr_angle(heading,matrixHeading((RenderCamera*)cam),1)-heading)<1e-6f);
-   /* Re-timing stays exactly on the latest segment, within its bounds. */
-   RenderCamera *a=(RenderCamera*)previous,*b=(RenderCamera*)current,*out=(RenderCamera*)cam;
-   float x=out->camFloatX,y=out->camFloatY,z=out->camFloatZ;
-   assert(x>=fminf(a->camFloatX,b->camFloatX)-1e-4f && x<=fmaxf(a->camFloatX,b->camFloatX)+1e-4f);
-   assert(y>=fminf(a->camFloatY,b->camFloatY)-1e-4f && y<=fmaxf(a->camFloatY,b->camFloatY)+1e-4f);
-   assert(z>=fminf(a->camFloatZ,b->camFloatZ)-1e-4f && z<=fmaxf(a->camFloatZ,b->camFloatZ)+1e-4f);
+static void cameraRegression(void) {
+ for(int scene=0;scene<2;scene++)for(int schedule=0;schedule<3;schedule++) {
+  resetChase();if(scene)g_introCountdown=100;
+  double time=0;int lastTick=-1,count=0,expectedHaveCamera=0;
+  int expectedPrevious[50]={0},expectedCurrent[50]={0};
+  while(time<3.5) {
+   double dt=schedule==0?1.0/90:schedule==1?1.0/120:1.0/(count%2?90:120);time+=dt;
+   displayTime=1000000000+(int64_t)llround(time*1e9);
+   int tick=vr_clock_step(&clockState,displayTime,1);
+   if(tick)lastTick++;
+   RenderCamera native=sampleNative(lastTick<0?0:lastTick,scene);
+   /* Model d298137's original tick rule independently. Include no-tick
+    * display frames and a mid-run camera-history invalidation. */
+   if(count==100){haveCamera=0;expectedHaveCamera=0;}
+   if(tick) {
+    memcpy(expectedPrevious,expectedCurrent,sizeof expectedPrevious);
+    memcpy(expectedCurrent,&native,sizeof expectedCurrent);
+    if(!expectedHaveCamera)memcpy(expectedPrevious,expectedCurrent,sizeof expectedPrevious);
+    expectedHaveCamera=1;
+   }
+   updateCameraHistory(tick,(int*)&native);
+   assert(!memcmp(previous,expectedPrevious,sizeof expectedPrevious));
+   assert(!memcmp(current,expectedCurrent,sizeof expectedCurrent));
+   assert(haveCamera==expectedHaveCamera);
+   float headYaw=.18f*sinf((float)time*1.7f),headRoll=.06f*cosf((float)time*.8f);
+   VRQuat head=vr_mul((VRQuat){0,sinf(headYaw/2),0,cosf(headYaw/2)},(VRQuat){0,0,sinf(headRoll/2),cosf(headRoll/2)});
+   for(int e=0;e<2;e++) {
+    eyes[e].pose=(VRPose){head,{.02f+(e?.032f:-.032f),.01f,-.025f}};
+    eyes[e].fov=(VRFov){-.9f+count*.00001f+e*.015f,1+count*.00002f-e*.01f,.95f,-.8f+e*.005f};
+   }
+   /* Compare the real history updater and production VR_ApplyCamera with the
+    * hash-checked d298137 camera at each display frame and all eye orders. */
+   for(int pass=0;pass<4;pass++) {
+    eye=(int[]){1,0,0,1}[pass];cacheEyeProjection();int *cam=current;
+    int before[50];memcpy(before,current,sizeof before);
+    Baseline_ApplyCamera(&cam);int baseline[50];memcpy(baseline,cam,sizeof baseline);
+    memcpy(current,before,sizeof current);cam=current;VR_ApplyCamera(&cam);
+    assert(!memcmp(baseline,cam,sizeof baseline));
+    assert(eyeProjection.left==tanf(eyes[eye].fov.left));
+   }
+   count++;
   }
-  if(count){float delta=remainderf(heading-lastHeading,6.28318530718f),rate=delta/(time-previousTime);
-   result.peakRate=fmax(result.peakRate,fabs(rate));result.travel+=fabs(delta);
-   if(count>1)result.peakAccel=fmax(result.peakAccel,fabs(rate-lastRate)/((time-previousTime+lastDt)*.5));lastRate=rate;lastDt=time-previousTime;
-  }
-  lastHeading=heading;previousTime=time;count++;
+  printf("restored native chase matches hash-checked d298 camera: %s %s, %d display frames, direct tracking/FOV, stereo order 1/0/0/1\n",
+   scene?"intro-zoom":"wrap/reversal",schedule==0?"90Hz":schedule==1?"120Hz":"variable90/120",count);
  }
- result.finalHeading=lastHeading;return result;
-}
-static void motionTests(void) {
- for(int scene=0;scene<2;scene++) {
-  float finals[3];int i=0;
-  for(int hz=90;hz<=150;hz+=30){int refresh=hz==150?0:hz;
-   Motion old=trajectory(refresh,scene,1),now=trajectory(refresh,scene,0);finals[i++]=now.finalHeading;
-   printf("comfort %s %s: baseline/new peak yaw deg/s %.3f/%.3f, accel deg/s2 %.3f/%.3f, travel deg %.3f/%.3f\n",scene?"intro-zoom":"wrap/reversal",refresh==90?"90Hz":refresh==120?"120Hz":"variable90/120",old.peakRate*57.29578,now.peakRate*57.29578,old.peakAccel*57.29578,now.peakAccel*57.29578,old.travel*57.29578,now.travel*57.29578);
-   assert(now.peakRate<=3.1417 && now.peakAccel<13.0);
-   assert(now.peakAccel<old.peakAccel);
-   if(!scene)assert(now.peakRate<old.peakRate);
-  }
-  assert(fabsf(remainderf(finals[0]-finals[1],6.2831853f))<.015f);
-  assert(fabsf(remainderf(finals[0]-finals[2],6.2831853f))<.015f);
- }
- /* C1 only on compatible collinear joins; reversal/corner safety dominates.
-  * Real production segment retiming is monotone even at slope bounds. */
- resetChase();RenderCamera *o=(RenderCamera*)older,*a=(RenderCamera*)previous,*b=(RenderCamera*)current;
- for(int mode=0;mode<4;mode++) {
-  o->camFloatX=mode==0?-10:mode==1?20:mode==2?-100:0;b->camFloatX=10;
-  float last=-1;
-  for(int i=0;i<=100;i++){float t=chasePositionFraction(i/100.f);assert(t>=last && t>=0 && t<=1);last=t;}
-  if(mode==0)assert(fabsf(chasePositionFraction(.37f)-.37f)<1e-6f);
- }
- (void)a;puts("native-segment translation: monotone, confined; collinear speed retained; reversal/corner continuity intentionally not claimed");
-}
-static void trackingAndCuts(void) {
- resetChase();RenderCamera native={0};native.camFloatY=200;native.pitchFloat=.5f;
- updatePresentationCamera(1,(int*)&native);
- for(int frame=0;frame<40;frame++) {
-  displayTime+=11111111;clockState.alpha=.6f;native.pitchFloat+=.02f;updatePresentationCamera(1,(int*)&native);
-  RenderCamera saved=presentation;
-  float p=presentation.yawFloat,y=presentation.pitchFloat,sp=sinf(p),cp=cosf(p),sy=sinf(y),cy=cosf(y);
-  float base[9]={cy,sy*sp,-sy*cp,0,cp,sp,sy,-sp*cy,cp*cy};
-  VRQuat head=vr_mul((VRQuat){0,sinf(frame*.02f),0,cosf(frame*.02f)},(VRQuat){0,0,sinf(frame*.01f),cosf(frame*.01f)});
-  for(int e=0;e<2;e++)eyes[e].pose=(VRPose){head,{.04f+(e?.032f:-.032f),.02f,-.03f}};
-  for(int pass=0;pass<4;pass++) {
-   eye=(int[]){1,0,0,1}[pass];eyes[eye].fov.left=-.9f+frame*.00001f;cacheEyeProjection();int *cam=current;VR_ApplyCamera(&cam);
-   float expected[9];vr_compose_basis(base,head,expected);float *actual=(float*)(cam+0x22);
-   for(int r=0;r<3;r++)for(int c=0;c<3;c++)assert(fabsf(actual[r*4+c]-expected[r*3+c])<1e-6f);
-   VRVec offset=vr_game_offset(base,eyes[eye].pose.p,units);RenderCamera *out=(RenderCamera*)cam;
-   assert(fabsf(out->camFloatX-presentation.camFloatX-offset.x)<2e-5f);
-   assert(!memcmp(&saved,&presentation,sizeof saved));assert(eyeProjection.left==tanf(eyes[eye].fov.left));
-  }
- }
- /* Race/focus resume invalidate the same shared state. Test every explicit
-  * context cut and teleport through the actual frame-boundary updater. */
- for(int mode=0;mode<9;mode++) {
-  if(mode==0)haveCamera=havePresentation=0;
-  if(mode==1)g_mirrorMode^=1;
-  if(mode==2)g_trackId++;
-  if(mode==3)g_introCountdown=100;
-  if(mode==4)g_postRaceCameraMode=1;
-  if(mode==5)g_demoMode=1;
-  if(mode==6)native.camFloatX+=1000;
-  if(mode==7)displayTime+=500000000;
-  if(mode==8)g_flyoverWpIdx[0]++;
-  native.pitchFloat+=.5f;displayTime+=11111111;clockState.alpha=1;updatePresentationCamera(1,(int*)&native);
-  assert(fabsf(presentation.pitchFloat-native.pitchFloat)<1e-5f && chaseVelocity[0]==0 && chaseVelocity[1]==0);
- }
- /* Bypass/native/identity remain exact d298137 camera behavior. */
- resetChase();native.pitchFloat=.7f;updatePresentationCamera(1,(int*)&native);chaseSmooth=0;
- for(int control=0;control<3;control++) {
-  eye=control==1?-1:0;identity=control==2;int *cam=current;Baseline_ApplyCamera(&cam);int old[50];memcpy(old,cam,sizeof old);
-  cam=current;VR_ApplyCamera(&cam);assert(!memcmp(old,cam,sizeof old));
- }
- chaseSmooth=1;identity=0;puts("direct head rotation/translation and runtime FOV: exact composition, four eye orders; context/teleport/resume cuts; native/identity/disabled camera: exact baseline");
+ /* FIXTURE_POSE1 keeps its historical exact-tick alpha bypass. */
+ resetChase();fixturePose=1;clockState.alpha=.1f;RenderCamera native=sampleNative(20,0);
+ updateCameraHistory(1,(int*)&native);eye=0;cacheEyeProjection();int *cam=current;int before[50];memcpy(before,current,sizeof before);
+ Baseline_ApplyCamera(&cam);int baseline[50];memcpy(baseline,cam,sizeof baseline);
+ memcpy(current,before,sizeof current);cam=current;VR_ApplyCamera(&cam);assert(!memcmp(baseline,cam,sizeof baseline));
+ puts("FIXTURE_POSE1 exact-tick camera remains byte-exact to d298137");
 }
 static void skyTemporal(void) {
  double peak[2]={0},steps[2]={0};
  for(int filtered=0;filtered<2;filtered++) {
-  resetChase();skyFilter=filtered;RenderCamera native={0};updatePresentationCamera(1,(int*)&native);
+  resetChase();skyFilter=filtered;RenderCamera native={0};updateCameraHistory(1,(int*)&native);
   g_tpageCount=0;g_tpageStateArray[0]=4;g_parallaxWidth=1664;g_parallaxExtraX=128;g_viewportArray[6]=512;
   float previousSample=0;
   for(int frame=0;frame<150;frame++) {
@@ -153,7 +105,7 @@ static void skyTemporal(void) {
  skyFilter=1;R_ClearTpageFilter(0);
 }
 static void reflectionTest(void) {
- resetChase();RenderCamera native={0};native.camFloatY=200;updatePresentationCamera(1,(int*)&native);
+ resetChase();RenderCamera native={0};native.camFloatY=200;updateCameraHistory(1,(int*)&native);
  eye=0;cacheEyeProjection();int *cam=current;VR_ApplyCamera(&cam);SetViewportClipRect(cam);
  g_tpageCount=0;g_tpageStateArray[0]=4;g_parallaxWidth=1664;g_parallaxExtraX=128;
  g_viewportHeight=g_screenHeight=480;g_numHumans=1;g_scissorEdge=SCISSOR_NONE;g_screenWidthFull=640;g_d3dSurfaceMode=4;
@@ -170,7 +122,7 @@ static void reflectionTest(void) {
  identity=0;eye=0;cacheEyeProjection();reflectionFade=1;
  for(int frame=0;frame<12;frame++) {
   /* The pre-race camera pitches and approaches the water. */
-  native.yawFloat=.6f-frame*.04f;native.camFloatY=200+frame*20;clockState.alpha=1;displayTime+=11111111;updatePresentationCamera(1,(int*)&native);
+  native.yawFloat=.6f-frame*.04f;native.camFloatY=200+frame*20;clockState.alpha=1;displayTime+=11111111;updateCameraHistory(1,(int*)&native);
   cam=current;VR_ApplyCamera(&cam);SetViewportClipRect(cam);ComputeParallaxAndPlayfieldState(0,cam);
   VR_SkyBegin();R_SetDepthWrite(1);R_SetDepthTest(1);R_SetAlphaTest(1);R_SetBlendMode(R_BLEND_ADDITIVE);
   R_StateSnapshot before=s_desired;
@@ -187,5 +139,5 @@ static void reflectionTest(void) {
  reflectionFade=1;waterSurfaceEnabled=1;puts("production reflection: native/identity exact controls; 12 intro pitch/height samples, opaque native base before alpha fade, full-to-zero endpoints, native additive tint afterward, no depth writes, exact state restore");
 }
 int main(void) {
- motionTests();trackingAndCuts();skyTemporal();reflectionTest();return 0;
+ cameraRegression();skyTemporal();reflectionTest();return 0;
 }

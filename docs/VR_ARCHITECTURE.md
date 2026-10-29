@@ -26,32 +26,19 @@ when the head turns. Track, models, terrain grid, and effects use that eye's
 camera and frustum.
 
 `vr/vr.c` retains the previous/current native chase-camera poses at 30 Hz.
-The presentation camera advances once before both eye passes from predicted
-display time. Game yaw/pitch use a critically damped spring (8/s), bounded to
-180/90 degrees per second and 720/360 degrees per second squared respectively.
-Position uses a monotone cubic time fraction on the latest native segment:
-collinear joins retain incoming speed, while corners and reversals prioritize
-staying on the segment. This adds no separate positional follower or extrapolated
-orbit. It does not lower sustained translation speed, guarantee C1 continuity
-at corners, or add wall collision to the native terrain-only camera constraints.
-Native game-camera state and controls are untouched. The current `xrLocateViews`
-eye orientation and position are composed afterward without smoothing. Local-space yaw and head-center
+The presentation camera interpolates position and the shortest pitch/yaw arc,
+then rebuilds an orthonormal basis. It retains the game's chase damping and
+collision behavior. The current `xrLocateViews` eye orientation and position
+are composed afterward without smoothing. Local-space yaw and head-center
 position are anchored from the same located-eye poses used to render after
 0.4 seconds of continuous FOCUSED state. Focus gain and menu/race transitions
 restart the settle window and cut camera interpolation. Head-center lean is limited to 0.35 m, independently of eye IPD.
-The game stays third person. Race/focus resumes, track/mirror/local-player changes,
-intro/gameplay and post-race transitions, loop/demo changes, demo waypoint cuts,
-large native position discontinuities and display gaps reset the presentation
-history. `SONICR_VR_CHASE_SMOOTH=0` restores the preceding linear presentation
-path. `SONICR_VR_FIXTURE_POSE=1` retains its old exact-tick diagnostic behavior
-and bypasses this filter; use the replay fixture without that option for temporal
-camera comparisons. Runtime FOVs are neither frozen nor filtered.
+The game stays third person.
 
-`tests/vr/run-comfort.sh` compares the real frame-boundary updater and eye camera
-with hash-checked d298137 camera source at 90, 120 and alternating 90/120 Hz.
-It covers intro zoom, fast turns, heading wrap/reversal, segment bounds, cuts,
-direct tracking, varying runtime FOV, repeated/reversed eyes and exact native,
-identity and disabled controls. Its GL recorder also checks effective sky
+`tests/vr/run-comfort.sh` compares the production camera history updater and
+per-eye output with hash-checked d298137 camera source at 90, 120 and alternating
+90/120 Hz, including intro zoom, heading wrap/reversal, direct tracking, varying
+runtime FOV and repeated/reversed eyes. Its GL recorder also checks effective sky
 sampling and reflection base/fade/tint order and state restoration. The temporal
 sky contrast fixture samples real emitted UVs using the recorded sampler on a
 synthetic one-texel signal; this isolates nearest-sampling steps but does not
@@ -107,8 +94,8 @@ the draw. `SONICR_VR_SKY_FILTER=0` restores nearest sampling and original UVs.
 Native reflection retains its screen-band projection and ripple timing. In eye
 passes its sky image fades smoothly over the lower 80% into the native
 corner-texel base, with the original additive teal tint applied afterward and
-no depth writes. `SONICR_VR_REFLECTION_FADE=0` restores the original band. All
-three comfort controls are read at initialization. The separate animated
+no depth writes. `SONICR_VR_REFLECTION_FADE=0` restores the original band. Both
+visual controls are read at initialization. The separate animated
 world-water texture, material, phase and physics are unchanged.
 Track-specific visual transitions and extreme head poses still require actual
 runtime review. The stereo race path targets one local viewport; split-screen

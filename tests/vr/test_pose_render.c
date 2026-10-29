@@ -277,11 +277,11 @@ static void fixtureTest(const char *directory){
    if(bad==1){unsetenv("SONICR_VR_DIAGNOSTIC");unsetenv("SONICR_VR_OFFHEAD_RENDER");}
    if(bad==2)unsetenv("SONICR_VR_FIXTURE_POSE");
    if(bad==3){unsetenv("SONICR_VR_FIXTURE_POSE");unsetenv("SONICR_VR_FIXTURE_PAUSE_TICK");unsetenv("SONICR_VR_DIAGNOSTIC");setenv("SONICR_VR_DUMP_STREAM","bad",1);}
-   assert(VR_Init());assert(fixturePose && fixturePauseTick==90 && trackFloat && hudDepth && skyRotation && chaseSmooth && skyFilter && reflectionFade);VR_Shutdown();
-   setenv("SONICR_VR_CHASE_SMOOTH","0",1);setenv("SONICR_VR_SKY_FILTER","0",1);setenv("SONICR_VR_REFLECTION_FADE","0",1);
-   setenv("SONICR_VR_TRACK_FLOAT","0",1);setenv("SONICR_VR_HUD_DEPTH","0",1);setenv("SONICR_VR_SKY_ROTATION","0",1);assert(VR_Init());assert(!trackFloat && !hudDepth && !skyRotation && !chaseSmooth && !skyFilter && !reflectionFade);
-   setenv("SONICR_VR_CHASE_SMOOTH","1",1);setenv("SONICR_VR_SKY_FILTER","1",1);setenv("SONICR_VR_REFLECTION_FADE","1",1);
-   assert(!chaseSmooth && !skyFilter && !reflectionFade);VR_Shutdown();_exit(0);
+   assert(VR_Init());assert(fixturePose && fixturePauseTick==90 && trackFloat && hudDepth && skyRotation && skyFilter && reflectionFade);VR_Shutdown();
+   setenv("SONICR_VR_SKY_FILTER","0",1);setenv("SONICR_VR_REFLECTION_FADE","0",1);
+   setenv("SONICR_VR_TRACK_FLOAT","0",1);setenv("SONICR_VR_HUD_DEPTH","0",1);setenv("SONICR_VR_SKY_ROTATION","0",1);assert(VR_Init());assert(!trackFloat && !hudDepth && !skyRotation && !skyFilter && !reflectionFade);
+   setenv("SONICR_VR_SKY_FILTER","1",1);setenv("SONICR_VR_REFLECTION_FADE","1",1);
+   assert(!skyFilter && !reflectionFade);VR_Shutdown();_exit(0);
   }
   int status;assert(waitpid(p,&status,0)==p && WIFEXITED(status));assert((WEXITSTATUS(status)!=0)==(bad>0 && bad<4));
  }
