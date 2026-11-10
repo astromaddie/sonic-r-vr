@@ -5,7 +5,10 @@ This branch adds native Steam Frame development to
 [Frame build and package guide](tools/frame/README.md). The build supports
 the flat ARM64 game (`SONICR_VR=0`) and an opt-in OpenXR stereo renderer
 (`SONICR_VR=1`) with an interpolated third-person chase camera and immediate
-head tracking. A standalone OpenXR/GLX probe is included for runtime diagnostics.
+head tracking, Frame controllers and a stereo HUD/menu panel. A standalone
+OpenXR/GLX probe is included for runtime diagnostics. The package build still
+requires a pinned local Docker image; the guide spells out that fresh-build
+limitation and the separate Linux source-build route.
 The [VR architecture](docs/VR_ARCHITECTURE.md) records the renderer, timing,
 camera design, and remaining integration gates.
 

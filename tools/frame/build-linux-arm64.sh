@@ -17,8 +17,10 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 	cat >&2 <<EOF
 Required local build image is missing: $image
 Expected ARM64 Ubuntu 22.04 with gcc-12, SDL2, OpenGL/X11 development files,
-and OpenXR SDK 1.1.63 at /opt/openxr. Set SONICR_BUILD_IMAGE to a compatible
-image; the selected image identity and package versions are recorded.
+and the pinned static OpenXR SDK 1.1.63 at /opt/openxr.
+This repository has no tested bootstrap for the recorded custom image.
+See tools/frame/README.md before selecting SONICR_BUILD_IMAGE: an alternative
+image must still pass the ARM64 and static-loader identity checks.
 EOF
 	exit 2
 fi
